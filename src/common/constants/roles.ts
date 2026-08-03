@@ -1,0 +1,26 @@
+export const ROLES = [
+  {
+    name: 'SUPER_ADMIN',
+    displayName: 'Super Administrator',
+    description: 'Has full access to the entire system.',
+    isSystem: true,
+  },
+  {
+    name: 'ADMIN',
+    displayName: 'Administrator',
+    description: 'Can manage most resources except system-level settings.',
+    isSystem: true,
+  },
+  {
+    name: 'MODERATOR',
+    displayName: 'Moderator',
+    description: 'Can manage users and tournaments.',
+    isSystem: true,
+  },
+  {
+    name: 'SUPPORT',
+    displayName: 'Support',
+    description: 'Can assist users and view activity logs.',
+    isSystem: true,
+  },
+] as const;
