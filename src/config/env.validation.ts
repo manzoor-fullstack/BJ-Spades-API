@@ -5,19 +5,28 @@ export const envValidationSchema = Joi.object({
     .valid('development', 'production', 'test')
     .default('development'),
 
-  PORT: Joi.number().default(5000),
+  PORT: Joi.number().port().default(5000),
 
   DATABASE_URL: Joi.string().required(),
 
-  JWT_ACCESS_SECRET: Joi.string().required(),
+  JWT_ACCESS_SECRET: Joi.string().min(16).required(),
 
-  JWT_REFRESH_SECRET: Joi.string().required(),
+  // Must differ from the access secret. If the same key signs both, a stolen
+  // access token can be presented as a refresh token.
+  JWT_REFRESH_SECRET: Joi.string()
+    .min(16)
+    .required()
+    .invalid(Joi.ref('JWT_ACCESS_SECRET'))
+    .messages({
+      'any.invalid':
+        'JWT_REFRESH_SECRET must be different from JWT_ACCESS_SECRET.',
+    }),
 
   ACCESS_TOKEN_EXPIRES: Joi.string().required(),
 
   REFRESH_TOKEN_EXPIRES: Joi.string().required(),
 
-  WEBHOOK_SECRET: Joi.string().required(),
+  WEBHOOK_SECRET: Joi.string().min(16).required(),
 
   CLOUDINARY_CLOUD_NAME: Joi.string().allow(''),
 
@@ -28,4 +37,10 @@ export const envValidationSchema = Joi.object({
   STRIPE_SECRET_KEY: Joi.string().allow(''),
 
   STRIPE_WEBHOOK_SECRET: Joi.string().allow(''),
+
+  UPLOAD_DIR: Joi.string().required(),
+
+  PUBLIC_URL: Joi.string().required(),
+
+  CORS_ORIGINS: Joi.string().allow(''),
 });

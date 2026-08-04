@@ -1,0 +1,31 @@
+# Development database.
+#
+#   docker compose up -d
+#
+# Port 5435, because this machine already has:
+#   5432 — a native Postgres install
+#   5433 — the unrelated "onway" project's Postgres container
+#   5434 — the BJ Spades test database (docker-compose.test.yml)
+# DATABASE_URL in .env must match the port below.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bjspades-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bj_spades
+    ports:
+      - '5435:5432'
+    volumes:
+      - bjspades-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d bj_spades']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bjspades-db-data:

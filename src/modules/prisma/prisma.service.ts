@@ -1,21 +1,38 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
+  private readonly logger = new Logger(PrismaService.name);
+
   constructor() {
     const adapter = new PrismaPg({
       connectionString: process.env.DATABASE_URL!,
     });
 
-    super({
-      adapter,
-    });
+    super({ adapter });
   }
 
-  async onModuleInit() {
+  async onModuleInit(): Promise<void> {
     await this.$connect();
-    console.log('✅ Connected to PostgreSQL');
+    this.logger.log('Connected to PostgreSQL');
+  }
+
+  /**
+   * Without this the connection pool is never released: the process hangs on
+   * shutdown, and Jest reports open handles after the suite finishes.
+   */
+  async onModuleDestroy(): Promise<void> {
+    await this.$disconnect();
+    this.logger.log('Disconnected from PostgreSQL');
   }
 }

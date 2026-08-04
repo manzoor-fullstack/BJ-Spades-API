@@ -3,4 +3,6 @@ export interface AuthenticatedAdmin {
   email: string;
   role: string;
   roleId: string;
+  /** Session this request is authenticated against. */
+  sessionId: string;
 }

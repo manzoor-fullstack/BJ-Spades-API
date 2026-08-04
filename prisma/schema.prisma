@@ -8,13 +8,32 @@ datasource db {
 
 enum UserStatus {
   ACTIVE
+  /// Registered but dormant.
+  INACTIVE
+  /// Created by webhook, awaiting admin activation.
+  PENDING
   SUSPENDED
+  /// Soft-deleted. The row survives so financial history stays intact.
   DELETED
+}
+
+/// Player tier. Surfaced as the "Role" dropdown in the create-user modal.
+enum UserTier {
+  PLAYER
+  PREMIUM
+  VIP
 }
 
 enum UserSource {
   ADMIN
   WEBHOOK
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DUPLICATE
 }
 
 model Role {
@@ -86,34 +105,63 @@ model Admin {
   @@index([email])
 }
 
-model RefreshToken {
-  id String @id @default(uuid())
-
-  token String @unique
-
-  expiresAt DateTime
-
-  adminId String
-  admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-}
-
+/// A login session. This is the unit of revocation: revoking a Session
+/// cascades to every RefreshToken in its rotation chain.
 model Session {
   id String @id @default(uuid())
 
+  adminId String
+  admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
   device    String?
   browser   String?
+  os        String?
   ipAddress String?
+  userAgent String?
 
-  isActive Boolean @default(true)
-
+  isActive     Boolean  @default(true)
   lastActivity DateTime @default(now())
+
+  revokedAt DateTime?
+  /// Admin id that revoked it, or null when the admin revoked their own.
+  revokedBy String?
+
+  refreshTokens RefreshToken[]
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([adminId, isActive])
+  @@index([expiresAt])
+}
+
+/// Refresh tokens are stored as SHA-256 hashes, never in plaintext, and are
+/// rotated on every use. Presenting an already-revoked token means it was
+/// stolen, so the whole session is revoked.
+model RefreshToken {
+  id String @id @default(uuid())
+
+  /// sha256(token) — the raw token is never persisted.
+  tokenHash String @unique
+
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   adminId String
   admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  /// Points at the token that superseded this one during rotation.
+  replacedByTokenId String?
+  createdByIp       String?
+
   createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([adminId, revokedAt])
+  @@index([expiresAt])
 }
 
 model User {
@@ -122,22 +170,84 @@ model User {
   firstName String
   lastName  String
 
-  email String @unique
-
+  email String  @unique
   phone String? @unique
 
-  country String?
+  /// Collected by the create-user modal and by the registration webhook.
+  /// Nullable because the webhook payload may omit them. Needed later for
+  /// merchandise fulfilment.
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String?
 
-  balance Decimal @default(0)
+  /// NUMERIC, never a float — floating-point money produces rounding errors
+  /// that surface as accounting discrepancies.
+  balance Decimal @default(0) @db.Decimal(18, 2)
 
   status UserStatus @default(ACTIVE)
-
+  tier   UserTier   @default(PLAYER)
   source UserSource
+
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+
+  /// Last time this record was touched by an admin or webhook action. NOT a
+  /// presence signal — there is no player app reporting online status.
+  /// See docs/05-DEFERRED-SCOPE.md D-02.
+  lastActiveAt DateTime?
 
   // Audit
   createdByAdminId String?
-  createdByAdmin   Admin?   @relation(fields: [createdByAdminId], references: [id])
+  createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
+
+  /// Set when this user arrived through the registration webhook.
+  webhookEventId String?       @unique
+  webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
+
+  /// Soft delete. Hard-deleting a user referenced by transactions or
+  /// tournament registrations would destroy financial history.
+  deletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([tier])
+  @@index([source])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([email, status])
+}
+
+/// Every inbound webhook is recorded before processing begins, so a payload
+/// that fails validation can still be inspected and replayed instead of
+/// vanishing. `eventId` being unique makes idempotency a database guarantee
+/// rather than application logic.
+model WebhookEvent {
+  id String @id @default(uuid())
+
+  /// Idempotency key supplied by the sender (X-BJS-Event-Id).
+  eventId String @unique
+  source  String
+  type    String
+
+  /// Raw body exactly as received, kept even when processing fails.
+  payload Json
+  headers Json?
+
+  status WebhookEventStatus @default(RECEIVED)
+
+  errorMessage String?
+  attempts     Int     @default(1)
+
+  processedAt DateTime?
+  user        User?
+
+  receivedAt DateTime @default(now())
+
+  @@index([status])
+  @@index([type, receivedAt])
 }

@@ -8,6 +8,7 @@ import { seedRolePermissions } from './role-permissions.seed';
 
 import { seedRoles } from './roles.seed';
 import { seedAdmin } from './admin.seed';
+import { seedUsers } from './users.seed';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -24,12 +25,19 @@ async function main() {
   await seedRoles(prisma);
   await seedRolePermissions(prisma);
   await seedAdmin(prisma);
+  // Must run after seedAdmin: admin-created users reference its id.
+  await seedUsers(prisma);
 
   console.log('🎉 Database Seed Completed');
 }
 
 main()
-  .catch(console.error)
+  .catch((error) => {
+    // Exiting non-zero matters: the integration harness runs this via
+    // execSync and would otherwise treat a failed seed as success.
+    console.error(error);
+    process.exitCode = 1;
+  })
   .finally(async () => {
     await prisma.$disconnect();
   });

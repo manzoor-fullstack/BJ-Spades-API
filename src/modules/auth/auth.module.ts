@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-
-import { AuthService } from './auth.service';
-import { AuthController } from './auth.controller';
-import { TokenService } from './services/token.service';
-import { AuthRepository } from './repositories/auth.repository';
 import { PassportModule } from '@nestjs/passport';
+
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { PermissionsGuard } from './guards/permissions.guard';
+import { AuthRepository } from './repositories/auth.repository';
+import { TokenService } from './services/token.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -15,23 +16,24 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 
     PassportModule,
 
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('jwt.accessSecret'),
-
-        signOptions: {
-          expiresIn: config.get<number>('jwt.accessExpiresIn'),
-        },
-      }),
-    }),
+    // Secrets and expiry are passed explicitly per call in TokenService,
+    // because access and refresh tokens are signed with different keys.
+    // Registering without options avoids implying a single shared secret.
+    JwtModule.register({}),
   ],
 
   controllers: [AuthController],
 
-  providers: [AuthService, TokenService, AuthRepository, JwtStrategy],
+  providers: [
+    AuthService,
+    TokenService,
+    AuthRepository,
+    JwtStrategy,
+    PermissionsGuard,
+  ],
 
-  exports: [TokenService],
+  // PermissionsGuard is exported rather than instantiated by APP_GUARD so the
+  // global guard and anything calling invalidate() share one cache.
+  exports: [TokenService, AuthRepository, PermissionsGuard],
 })
 export class AuthModule {}

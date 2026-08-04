@@ -14,7 +14,11 @@ export async function seedAdmin(prisma: PrismaClient) {
     throw new Error('SUPER_ADMIN role not found. Please run roles seed first.');
   }
 
-  const hashedPassword = await bcrypt.hash('Admin123!', 12);
+  // Single source of truth: this constant is both hashed and printed below,
+  // so the credentials logged on seed always actually work.
+  const plainPassword = 'Admin123!';
+
+  const hashedPassword = await bcrypt.hash(plainPassword, 12);
 
   await prisma.admin.upsert({
     where: {
@@ -39,6 +43,6 @@ export async function seedAdmin(prisma: PrismaClient) {
 
   console.log('✅ Super Admin Created');
   console.log('📧 Email: admin@bjspades.com');
-  console.log('🔑 Password: Admin@123');
+  console.log(`🔑 Password: ${plainPassword}`);
   console.log('🎉 Super Admin Seeded Successfully\n');
 }

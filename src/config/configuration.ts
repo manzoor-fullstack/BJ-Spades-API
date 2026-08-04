@@ -2,6 +2,9 @@ export default () => ({
   app: {
     port: parseInt(process.env.PORT ?? '5000', 10),
     nodeEnv: process.env.NODE_ENV,
+    publicUrl: process.env.PUBLIC_URL,
+    uploadDir: process.env.UPLOAD_DIR,
+    corsOrigins: process.env.CORS_ORIGINS,
   },
 
   database: {

@@ -3,19 +3,49 @@ import { PERMISSION_CODES } from '../../src/common/constants/permissions';
 
 const PERMISSIONS = [
   {
+    name: 'View Dashboard',
+    code: PERMISSION_CODES.DASHBOARD_VIEW,
+    description: 'View the dashboard and platform statistics',
+  },
+  {
     name: 'Manage Users',
     code: PERMISSION_CODES.USERS_MANAGE,
-    description: 'Create, edit, suspend and delete users',
+    description: 'Create, edit, suspend and delete users, and adjust balances',
+  },
+  {
+    name: 'View Users',
+    code: PERMISSION_CODES.USERS_VIEW,
+    description: 'Read-only access to user accounts',
   },
   {
     name: 'Manage Tournaments',
     code: PERMISSION_CODES.TOURNAMENTS_MANAGE,
-    description: 'Create and manage tournaments',
+    description: 'Create and manage tournaments and registrations',
+  },
+  {
+    name: 'Manage Rewards',
+    code: PERMISSION_CODES.REWARDS_MANAGE,
+    description: 'Create and manage rewards and merchandise',
+  },
+  {
+    name: 'Manage Payouts',
+    code: PERMISSION_CODES.PAYOUTS_MANAGE,
+    description: 'Approve and process payouts',
+  },
+  {
+    name: 'View Payouts',
+    code: PERMISSION_CODES.PAYOUTS_VIEW,
+    description: 'Read-only access to payouts',
+  },
+  {
+    name: 'Manage Admins',
+    code: PERMISSION_CODES.ADMINS_MANAGE,
+    description: 'Create and edit administrator accounts',
   },
   {
     name: 'Manage Roles',
     code: PERMISSION_CODES.ROLES_MANAGE,
-    description: 'Create and manage roles',
+    description: 'Create and manage roles and permission assignment',
   },
   {
     name: 'View Activity',
