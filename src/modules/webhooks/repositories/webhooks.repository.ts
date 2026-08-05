@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ActivityCategory,
   Prisma,
   UserSource,
   UserStatus,
@@ -18,6 +19,20 @@ export interface CreateWebhookEventInput {
   headers: Prisma.InputJsonValue;
 }
 
+/**
+ * The audit entry written alongside the user, composed by WebhooksService.
+ * `entityId` is filled in here because the user id does not exist until the
+ * transaction has already started.
+ */
+export interface WebhookActivityEntry {
+  category: ActivityCategory;
+  action: string;
+  title: string;
+  description: string;
+  entityType: string;
+  isHighPriority: boolean;
+}
+
 export interface CreateUserFromEventInput {
   webhookEventId: string;
   firstName: string;
@@ -31,6 +46,7 @@ export interface CreateUserFromEventInput {
   state?: string;
   postalCode?: string;
   country?: string;
+  activity: WebhookActivityEntry;
 }
 
 export interface FindEventsInput {
@@ -123,6 +139,11 @@ export class WebhooksRepository {
    * Both halves or neither: an event marked PROCESSED with no user behind it
    * would be invisible to every reconciliation query, and a user with an event
    * still sitting at RECEIVED would be replayed into a duplicate by a retry.
+   *
+   * The audit entry is written inside the same transaction, not fire-and-forget
+   * like the interceptor's: a user created by an anonymous internet form must
+   * never exist without the record of where it came from. Carried forward from
+   * docs/phases/PHASE-1.md.
    */
   createUserFromEvent(
     input: CreateUserFromEventInput,
@@ -161,6 +182,21 @@ export class WebhooksRepository {
           // Cleared so a successful retry does not leave the previous failure
           // reason sitting on a PROCESSED row.
           errorMessage: null,
+        },
+      });
+
+      await tx.activityLog.create({
+        data: {
+          category: input.activity.category,
+          action: input.activity.action,
+          title: input.activity.title,
+          description: input.activity.description,
+          entityType: input.activity.entityType,
+          entityId: user.id,
+          isHighPriority: input.activity.isHighPriority,
+          // No admin: the actor is the external signup form.
+          adminId: null,
+          metadata: { webhookEventId: input.webhookEventId },
         },
       });
 

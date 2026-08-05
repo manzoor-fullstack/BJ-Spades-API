@@ -6,15 +6,22 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, UserTier, WebhookEventStatus } from '@prisma/client';
+import {
+  ActivityCategory,
+  Prisma,
+  UserTier,
+  WebhookEventStatus,
+} from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate, type ValidationError } from 'class-validator';
 
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import {
   buildPaginationMeta,
   type PaginationMeta,
 } from '../../common/dto/pagination.dto';
 import { splitFullName } from '../../common/text/split-full-name.util';
+import { ActivityLogService } from '../activity/activity.service';
 
 import type { WebhookAckDto } from './dto/webhook-ack.dto';
 import type { WebhookEventsQueryDto } from './dto/webhook-events-query.dto';
@@ -91,6 +98,7 @@ export class WebhooksService {
   constructor(
     private readonly repository: WebhooksRepository,
     private readonly signatureService: SignatureService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   /**
@@ -185,7 +193,7 @@ export class WebhooksService {
     // `event.payload` rather than the in-memory copy: what gets replayed by
     // the retry endpoint is what the database actually holds, so a round-trip
     // problem shows up on the first delivery instead of days later.
-    return this.processStoredEvent(event.id, eventId, event.payload);
+    return this.processStoredEvent(event.id, eventId, source, event.payload);
   }
 
   /**
@@ -212,7 +220,12 @@ export class WebhooksService {
 
     await this.repository.incrementAttempts(id);
 
-    return this.processStoredEvent(event.id, event.eventId, event.payload);
+    return this.processStoredEvent(
+      event.id,
+      event.eventId,
+      event.source,
+      event.payload,
+    );
   }
 
   async findEvents(query: WebhookEventsQueryDto): Promise<WebhookEventsPage> {
@@ -240,6 +253,7 @@ export class WebhooksService {
   private async processStoredEvent(
     id: string,
     eventId: string,
+    source: string,
     payload: Prisma.JsonValue,
   ): Promise<WebhookAckDto> {
     const validation = await this.validatePayload(payload);
@@ -282,6 +296,17 @@ export class WebhooksService {
         state: data.state,
         postalCode: data.postalCode,
         country: data.country,
+
+        // Written inside the same transaction as the user, so a webhook user
+        // can never exist without its audit entry.
+        activity: {
+          category: ActivityCategory.WEBHOOK,
+          action: ACTIVITY_ACTIONS.WEBHOOK_USER_CREATED.code,
+          title: `New user ${data.fullName} registered`,
+          description: `Created via webhook from ${source}`,
+          entityType: 'User',
+          isHighPriority: ACTIVITY_ACTIONS.WEBHOOK_USER_CREATED.isHighPriority,
+        },
       });
 
       this.logger.log(`Webhook ${eventId} created user ${user.id}.`);
@@ -313,6 +338,17 @@ export class WebhooksService {
     await this.repository.markEventFailed(id, reason);
 
     this.logger.warn(`Webhook ${eventId} stored as FAILED: ${reason}`);
+
+    // High priority: a failing registration feed means real signups are being
+    // dropped, and nobody watches the application log.
+    await this.activityLog.record({
+      category: ActivityCategory.WEBHOOK,
+      action: ACTIVITY_ACTIONS.WEBHOOK_FAILED.code,
+      title: `Webhook ${eventId} failed`,
+      description: reason,
+      entityType: 'WebhookEvent',
+      entityId: id,
+    });
 
     return { eventId, status: 'FAILED', reason };
   }

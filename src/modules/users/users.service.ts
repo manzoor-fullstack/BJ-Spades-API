@@ -311,13 +311,22 @@ export class UsersService {
    * fields move: `deletedAt` drives the default list filter, `status` keeps the
    * enum honest for anything reading the column directly.
    */
-  async remove(id: string): Promise<void> {
+  /**
+   * Returns the deleted user even though the route answers 204.
+   *
+   * Nest discards the body for a 204, but the value still travels through the
+   * interceptor chain — which is what lets AuditInterceptor name the person in
+   * the audit title instead of logging a bare UUID.
+   */
+  async remove(id: string): Promise<UserDetail> {
     await this.getOrThrow(id);
 
-    await this.repository.update(id, {
-      status: UserStatus.DELETED,
-      deletedAt: new Date(),
-    });
+    return toUserDetail(
+      await this.repository.update(id, {
+        status: UserStatus.DELETED,
+        deletedAt: new Date(),
+      }),
+    );
   }
 
   async getBalance(id: string): Promise<UserBalance> {

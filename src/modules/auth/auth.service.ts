@@ -5,11 +5,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ActivityCategory } from '@prisma/client';
 import ms, { StringValue } from 'ms';
 
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import { hashToken, randomHex } from '../../common/crypto/token-hash.util';
 import { RequestContext } from '../../common/http/request-context.util';
 import { PasswordService } from '../../common/password/password.service';
+import { ActivityLogService } from '../activity/activity.service';
 
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
@@ -36,6 +39,7 @@ export class AuthService implements OnModuleInit {
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
     private readonly configService: ConfigService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -49,14 +53,14 @@ export class AuthService implements OnModuleInit {
     context: RequestContext = {},
   ): Promise<AuthResponseDto> {
     const { email, password } = loginDto;
+    const attemptedEmail = email.toLowerCase().trim();
 
-    const admin = await this.authRepository.findAdminByEmail(
-      email.toLowerCase().trim(),
-    );
+    const admin = await this.authRepository.findAdminByEmail(attemptedEmail);
 
     if (!admin) {
       // Burn equivalent time before failing.
       await this.passwordService.compare(password, this.dummyHash);
+      await this.recordFailedLogin(attemptedEmail, 'Unknown email', context);
       throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
@@ -66,12 +70,18 @@ export class AuthService implements OnModuleInit {
     );
 
     if (!passwordMatches) {
+      await this.recordFailedLogin(attemptedEmail, 'Wrong password', context);
       throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     // Checked after the password so a deactivated account cannot be
     // distinguished from a wrong password without valid credentials.
     if (!admin.isActive) {
+      await this.recordFailedLogin(
+        attemptedEmail,
+        'Account deactivated',
+        context,
+      );
       throw new UnauthorizedException('Your account has been deactivated.');
     }
 
@@ -97,6 +107,23 @@ export class AuthService implements OnModuleInit {
     );
 
     await this.authRepository.updateLastLogin(admin.id);
+
+    // Logged here rather than by AuditInterceptor: /auth/login is @Public(),
+    // so there is no admin on the request for the interceptor to attribute.
+    await this.activityLog.record({
+      category: ActivityCategory.AUTH,
+      action: ACTIVITY_ACTIONS.AUTH_LOGIN.code,
+      title: `${admin.email} signed in`,
+      description: context.browser
+        ? `${context.browser} on ${context.os ?? 'an unknown OS'}`
+        : null,
+      adminId: admin.id,
+      entityType: 'Admin',
+      entityId: admin.id,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: { sessionId: session.id, device: context.device },
+    });
 
     return {
       ...tokens,
@@ -147,6 +174,19 @@ export class AuthService implements OnModuleInit {
 
       await this.authRepository.revokeSession(stored.sessionId);
 
+      // On the throwing path, so AuditInterceptor never sees it.
+      await this.activityLog.record({
+        category: ActivityCategory.AUTH,
+        action: ACTIVITY_ACTIONS.AUTH_TOKEN_REUSE_DETECTED.code,
+        title: 'Refresh token reuse detected',
+        description: `A rotated refresh token was replayed; session ${stored.sessionId} was revoked.`,
+        adminId: stored.adminId,
+        entityType: 'Session',
+        entityId: stored.sessionId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+
       throw new UnauthorizedException(
         'This session has been ended for security reasons. Please sign in again.',
       );
@@ -168,6 +208,20 @@ export class AuthService implements OnModuleInit {
 
     if (!admin || !admin.isActive) {
       await this.authRepository.revokeSession(stored.sessionId);
+
+      await this.activityLog.record({
+        category: ActivityCategory.AUTH,
+        action: ACTIVITY_ACTIONS.AUTH_SESSION_REVOKED.code,
+        title: 'Session revoked',
+        description:
+          'A refresh was attempted for an admin that is no longer active.',
+        adminId: stored.adminId,
+        entityType: 'Session',
+        entityId: stored.sessionId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+
       throw new UnauthorizedException('Your account is no longer active.');
     }
 
@@ -241,6 +295,31 @@ export class AuthService implements OnModuleInit {
   }
 
   // ─── Internals ───────────────────────────────────────────────
+
+  /**
+   * A failed login has no authenticated admin, so `adminId` stays null and the
+   * attempted address goes in the description — that is what makes the entry
+   * useful when someone is walking a list of addresses.
+   *
+   * The attempted password is never recorded, not even hashed.
+   */
+  private async recordFailedLogin(
+    attemptedEmail: string,
+    reason: string,
+    context: RequestContext,
+  ): Promise<void> {
+    await this.activityLog.record({
+      category: ActivityCategory.AUTH,
+      action: ACTIVITY_ACTIONS.AUTH_LOGIN_FAILED.code,
+      title: 'Failed sign-in attempt',
+      description: `Failed sign-in attempt for ${attemptedEmail}`,
+      adminId: null,
+      entityType: 'Admin',
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: { email: attemptedEmail, reason },
+    });
+  }
 
   private async issueTokens(
     payload: JwtPayload,

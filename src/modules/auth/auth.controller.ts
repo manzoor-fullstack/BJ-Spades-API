@@ -14,8 +14,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ActivityCategory } from '@prisma/client';
 import type { Request } from 'express';
 
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
+import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { extractRequestContext } from '../../common/http/request-context.util';
 
 import { AuthService } from './auth.service';
@@ -67,6 +70,13 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AuditLog({
+    category: ActivityCategory.AUTH,
+    action: ACTIVITY_ACTIONS.AUTH_LOGOUT.code,
+    title: (ctx) => `${ctx.admin?.email ?? 'An admin'} signed out`,
+    entityType: 'Admin',
+    entityId: (ctx) => ctx.admin?.id,
+  })
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'End the current session' })
@@ -76,6 +86,14 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AuditLog({
+    category: ActivityCategory.AUTH,
+    action: ACTIVITY_ACTIONS.AUTH_LOGOUT_ALL.code,
+    title: (ctx) =>
+      `${ctx.admin?.email ?? 'An admin'} signed out of all other sessions`,
+    entityType: 'Admin',
+    entityId: (ctx) => ctx.admin?.id,
+  })
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

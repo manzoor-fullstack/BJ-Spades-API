@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import { hashToken } from '../../../common/crypto/token-hash.util';
 import { PasswordService } from '../../../common/password/password.service';
+import { ActivityLogService } from '../../activity/activity.service';
 import { AuthService } from '../auth.service';
 import { AuthRepository } from '../repositories/auth.repository';
 import { TokenService } from '../services/token.service';
@@ -34,6 +35,7 @@ describe('AuthService', () => {
   let repository: Mocked<AuthRepository>;
   let passwords: Mocked<PasswordService>;
   let tokens: Mocked<TokenService>;
+  let activityLog: Pick<Mocked<ActivityLogService>, 'record'>;
 
   beforeEach(async () => {
     repository = {
@@ -76,11 +78,14 @@ describe('AuthService', () => {
       ),
     } as unknown as ConfigService;
 
+    activityLog = { record: jest.fn().mockResolvedValue(undefined) };
+
     service = new AuthService(
       repository as unknown as AuthRepository,
       passwords as unknown as PasswordService,
       tokens as unknown as TokenService,
       config,
+      activityLog as unknown as ActivityLogService,
     );
 
     await service.onModuleInit();

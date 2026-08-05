@@ -1,3 +1,12 @@
+/**
+ * The role that must never be locked out.
+ *
+ * Named here rather than compared against a literal at each call site: the
+ * guard rails in AdminsService all key off this one name, and a typo in any of
+ * them would silently disable the protection.
+ */
+export const SUPER_ADMIN_ROLE = 'SUPER_ADMIN';
+
 export const ROLES = [
   {
     name: 'SUPER_ADMIN',

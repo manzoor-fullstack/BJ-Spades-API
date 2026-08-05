@@ -7,14 +7,17 @@ import configuration from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
 
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PasswordModule } from './common/password/password.module';
 
+import { ActivityModule } from './modules/activity/activity.module';
 import { AdminsModule } from './modules/admins/admins.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './modules/auth/guards/permissions.guard';
 import { HealthModule } from './modules/health/health.module';
+import { PermissionsModule } from './modules/permissions/permissions.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -48,9 +51,17 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 
     PasswordModule,
 
+    // @Global: nearly every module writes audit entries, and AuditInterceptor
+    // is bound below through APP_INTERCEPTOR.
+    ActivityModule,
+
     AuthModule,
 
     RolesModule,
+
+    // The permission catalogue behind the role permissions modal, which used to
+    // render a hardcoded list of six camelCase ids (docs/phases/PHASE-3.md).
+    PermissionsModule,
 
     // Previously written but never imported, so their routes did not exist.
     AdminsModule,
@@ -75,7 +86,13 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     { provide: APP_GUARD, useExisting: PermissionsGuard },
 
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
+
+    // Order matters here too, in reverse: the first-registered interceptor is
+    // the outermost, so its response mapping runs last. TransformInterceptor
+    // must sit outside AuditInterceptor, otherwise `@AuditLog` resolvers would
+    // be handed `{ success: true, data: ... }` instead of the handler's result.
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule {}
