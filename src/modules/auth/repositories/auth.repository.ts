@@ -117,6 +117,32 @@ export class AuthRepository {
     });
   }
 
+  /**
+   * Every live session across every admin, with just enough of the owner to
+   * label the row. Backs `GET /security/sessions`, which is a platform-wide
+   * view rather than a per-admin one.
+   *
+   * `expiresAt` is filtered as well as `isActive`: an expired session is
+   * already rejected by JwtStrategy, so listing it as active would be a lie.
+   */
+  async findAllActiveSessions(now: Date = new Date()) {
+    return this.prisma.session.findMany({
+      where: { isActive: true, revokedAt: null, expiresAt: { gt: now } },
+      include: {
+        admin: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+      },
+      orderBy: { lastActivity: 'desc' },
+    });
+  }
+
+  countActiveSessions(now: Date = new Date()): Promise<number> {
+    return this.prisma.session.count({
+      where: { isActive: true, revokedAt: null, expiresAt: { gt: now } },
+    });
+  }
+
   async touchSession(sessionId: string) {
     return this.prisma.session.update({
       where: { id: sessionId },
@@ -166,6 +192,36 @@ export class AuthRepository {
         data: { revokedAt: now, isActive: false, revokedBy: adminId },
       }),
     ]);
+  }
+
+  /**
+   * Revokes every live session on the platform except one, and returns how
+   * many went.
+   *
+   * This is the "sign everybody out" control on the security page, so it is
+   * deliberately not scoped to a single admin the way
+   * `revokeAllSessionsForAdmin` is — the caller holds `security.manage` and is
+   * acting on the whole system. The caller's own session is spared so they can
+   * keep working through whatever prompted them to press it.
+   */
+  async revokeAllSessionsExcept(
+    exceptSessionId: string,
+    revokedBy: string,
+  ): Promise<number> {
+    const now = new Date();
+
+    const [, sessions] = await this.prisma.$transaction([
+      this.prisma.refreshToken.updateMany({
+        where: { revokedAt: null, sessionId: { not: exceptSessionId } },
+        data: { revokedAt: now },
+      }),
+      this.prisma.session.updateMany({
+        where: { revokedAt: null, id: { not: exceptSessionId } },
+        data: { revokedAt: now, isActive: false, revokedBy },
+      }),
+    ]);
+
+    return sessions.count;
   }
 
   // ─── Refresh tokens ──────────────────────────────────────────

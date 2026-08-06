@@ -5,3 +5,6 @@ allowBuilds:
   esbuild: true
   prisma: false
   unrs-resolver: true
+  # Native image codecs. Without the build step sharp cannot decode or resize,
+  # so uploads would fail at runtime rather than at install time.
+  sharp: true

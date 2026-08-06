@@ -36,6 +36,76 @@ enum WebhookEventStatus {
   DUPLICATE
 }
 
+enum TournamentStatus {
+  SCHEDULED
+  REGISTERING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  CHECKED_IN
+  WITHDRAWN
+  DISQUALIFIED
+}
+
+enum PayoutStatus {
+  PENDING
+  PENDING_REVIEW
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum PayoutMethod {
+  STRIPE_CONNECT
+  MANUAL
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  ENTRY_FEE
+  PRIZE
+  ADJUSTMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum StripeAccountStatus {
+  NOT_CONNECTED
+  PENDING
+  VERIFIED
+  RESTRICTED
+}
+
+/// Shared by Reward and Merchandise — both surface the same three states in
+/// their create modals.
+enum ItemStatus {
+  ACTIVE
+  INACTIVE
+  COMING_SOON
+}
+
+enum RewardCategory {
+  GENERAL
+  FOOD
+  ENTERTAINMENT
+  SHOPPING
+  TECH
+  TRAVEL
+}
+
 enum ActivityCategory {
   AUTH
   USER
@@ -50,9 +120,9 @@ enum ActivityCategory {
 }
 
 model Role {
-  id          String @id @default(uuid())
+  id String @id @default(uuid())
 
-  name        String @unique
+  name String @unique
 
   displayName String
 
@@ -68,8 +138,9 @@ model Role {
 
   updatedAt DateTime @updatedAt
 }
+
 model Permission {
-  id          String  @id @default(uuid())
+  id String @id @default(uuid())
 
   name        String
   code        String  @unique
@@ -113,6 +184,16 @@ model Admin {
   createdUsers User[]
 
   activityLogs ActivityLog[]
+
+  uploadedMedia       MediaAsset[]
+  createdTournaments  Tournament[]
+  createdRewards      Reward[]
+  createdMerchandise  Merchandise[]
+  processedPayouts    Payout[]
+  createdTransactions Transaction[]
+  updatedSettings     Settings[]
+  securityAlerts      SecurityAlert[]
+  resolvedAlerts      SecurityAlert[] @relation("SecurityAlertResolvedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -209,6 +290,10 @@ model User {
   emailVerified   Boolean   @default(false)
   emailVerifiedAt DateTime?
 
+  // Stripe Connect — Phase 6
+  stripeConnectAccountId String?             @unique
+  stripeAccountStatus    StripeAccountStatus @default(NOT_CONNECTED)
+
   /// Last time this record was touched by an admin or webhook action. NOT a
   /// presence signal — there is no player app reporting online status.
   /// See docs/05-DEFERRED-SCOPE.md D-02.
@@ -221,6 +306,11 @@ model User {
   /// Set when this user arrived through the registration webhook.
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
+
+  registrations  TournamentRegistration[]
+  payouts        Payout[]
+  transactions   Transaction[]
+  securityAlerts SecurityAlert[]
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -309,4 +399,322 @@ model ActivityLog {
   @@index([adminId, createdAt])
   @@index([entityType, entityId])
   @@index([isHighPriority, createdAt])
+}
+
+/// An uploaded file, stored behind the StorageService interface.
+///
+/// Kept as its own model rather than a URL column so the same image can be
+/// referenced by more than one entity, and so swapping local disk for
+/// Cloudinary later changes only `key` and `url`.
+model MediaAsset {
+  id String @id @default(uuid())
+
+  /// Storage-relative key, e.g. "tournaments/<uuid>.webp". Never the original
+  /// filename — that is attacker-controlled and a path-traversal vector.
+  key String @unique
+  url String
+
+  mimeType  String
+  sizeBytes Int
+  width     Int?
+  height    Int?
+
+  uploadedByAdminId String?
+  uploadedByAdmin   Admin?  @relation(fields: [uploadedByAdminId], references: [id])
+
+  tournaments Tournament[]
+  rewards     Reward[]
+  merchandise Merchandise[]
+
+  createdAt DateTime @default(now())
+}
+
+model Tournament {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+
+  imageId String?
+  image   MediaAsset? @relation(fields: [imageId], references: [id])
+
+  entryFee  Decimal @default(0) @db.Decimal(18, 2)
+  prizePool Decimal @default(0) @db.Decimal(18, 2)
+
+  /// Int rather than an enum: the modal offers a fixed list (8/16/…/256) and
+  /// the DTO validates membership, but a custom size must not need a migration.
+  maxPlayers Int
+
+  /// Always UTC. The modal submits a separate date and time; the DTO combines
+  /// them. Interpreting them as server-local silently shifts start times.
+  startsAt DateTime
+
+  status TournamentStatus @default(SCHEDULED)
+
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  createdByAdminId String
+  createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
+
+  registrations TournamentRegistration[]
+  payouts       Payout[]
+  transactions  Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, startsAt])
+  @@index([startsAt])
+}
+
+model TournamentRegistration {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  status RegistrationStatus @default(REGISTERED)
+
+  /// Final rank and prize, set when results are submitted.
+  placement Int?
+  prizeWon  Decimal? @db.Decimal(18, 2)
+
+  registeredAt DateTime @default(now())
+
+  /// Payout associated with this registration
+  payout   Payout? @relation(fields: [payoutId], references: [id])
+  payoutId String?
+
+  /// Makes double-registration impossible at the database level rather than
+  /// relying on a check-then-insert race in application code. Two simultaneous
+  /// registrations for the last slot are resolved here, not by luck.
+  @@unique([tournamentId, userId])
+  @@index([userId])
+  @@index([tournamentId, status])
+}
+
+model Reward {
+  id String @id @default(uuid())
+
+  name     String
+  company  String
+  category RewardCategory @default(GENERAL)
+
+  /// Deliberately a display STRING, not a Decimal. The existing data mixes
+  /// currency ("$20") with token counts ("100"), so a numeric column would need
+  /// a companion unit enum and a change to the reward modal — neither is in
+  /// Milestone 1. Recorded as accepted debt: docs/05-DEFERRED-SCOPE.md D-17.
+  value String
+
+  description String?
+  terms       String?
+
+  imageId String?
+  image   MediaAsset? @relation(fields: [imageId], references: [id])
+
+  status ItemStatus @default(ACTIVE)
+
+  /// null means unlimited — correct for a digital gift-card code.
+  stock         Int?
+  /// Reserved for Milestone 2 redemption; stays 0 for now.
+  redeemedCount Int  @default(0)
+
+  createdByAdminId String
+  createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
+
+  /// Soft delete: a reward someone has redeemed cannot be erased without
+  /// breaking history, even though redemption does not exist yet.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, category])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+model Merchandise {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+
+  /// Money is NUMERIC and formatted at the display layer. The mock showed
+  /// "$39.95" as a string; storing it that way makes arithmetic impossible.
+  price Decimal @db.Decimal(18, 2)
+
+  imageId String?
+  image   MediaAsset? @relation(fields: [imageId], references: [id])
+
+  status ItemStatus @default(ACTIVE)
+
+  variants MerchandiseVariant[]
+
+  createdByAdminId String
+  createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
+
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+model MerchandiseVariant {
+  id String @id @default(uuid())
+
+  merchandiseId String
+  merchandise   Merchandise @relation(fields: [merchandiseId], references: [id], onDelete: Cascade)
+
+  size  String?
+  color String?
+
+  /// Optional, but unique when supplied. Auto-generated when omitted.
+  sku   String? @unique
+  stock Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([merchandiseId])
+}
+
+model Payout {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount   Decimal      @db.Decimal(18, 2)
+  currency String       @default("usd")
+  method   PayoutMethod @default(STRIPE_CONNECT)
+  status   PayoutStatus @default(PENDING)
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+  placement    Int?
+
+  stripeTransferId String? @unique
+  failureReason    String?
+  blockerReason    String? // "KYC incomplete", "Wallet unverified"
+
+  owedSince   DateTime  @default(now())
+  approvedAt  DateTime?
+  processedAt DateTime?
+  paidAt      DateTime?
+
+  approvedByAdminId String?
+  approvedByAdmin   Admin?  @relation(fields: [approvedByAdminId], references: [id])
+
+  transactions Transaction[]
+
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  tournamentRegistrations TournamentRegistration[]
+
+  @@index([status, owedSince])
+  @@index([userId])
+}
+
+model Transaction {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
+
+  amount        Decimal @db.Decimal(18, 2) // signed: negative = debit
+  balanceBefore Decimal @db.Decimal(18, 2)
+  balanceAfter  Decimal @db.Decimal(18, 2)
+
+  description String?
+  reference   String? @unique // external id, e.g. Stripe
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  payoutId String?
+  payout   Payout? @relation(fields: [payoutId], references: [id])
+
+  createdByAdminId String?
+  createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, status])
+  @@index([createdAt])
+}
+
+model Settings {
+  id String @id @default(uuid())
+
+  /// Settings key (company, adminEmail, timezone, etc.)
+  key String @unique
+
+  /// JSON value for the setting
+  value Json
+
+  /// Human-readable description of the setting
+  description String?
+
+  /// Settings category for grouping
+  category String @default("general")
+
+  /// Whether this setting requires admin permission to change
+  isProtected Boolean @default(false)
+
+  /// Admin who last updated this setting
+  updatedByAdminId String?
+  updatedByAdmin   Admin?  @relation(fields: [updatedByAdminId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([isProtected])
+}
+
+model SecurityAlert {
+  id String @id @default(uuid())
+
+  title       String
+  description String
+  severity    String // HIGH, MEDIUM, LOW
+  status      String @default("UNRESOLVED") // UNRESOLVED, INVESTIGATING, RESOLVED
+
+  /// IP address or other identifier related to the alert
+  sourceIp  String?
+  userAgent String?
+
+  /// User or admin this alert relates to
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  adminId String?
+  admin   Admin?  @relation(fields: [adminId], references: [id])
+
+  /// Additional metadata about the alert
+  metadata Json?
+
+  /// When the alert was resolved
+  resolvedAt        DateTime?
+  resolvedByAdminId String?
+  resolvedByAdmin   Admin?    @relation("SecurityAlertResolvedBy", fields: [resolvedByAdminId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([severity, createdAt])
+  @@index([sourceIp])
 }

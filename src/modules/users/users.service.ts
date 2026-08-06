@@ -4,7 +4,12 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { UserSource, UserStatus, UserTier } from '@prisma/client';
+import {
+  TransactionType,
+  UserSource,
+  UserStatus,
+  UserTier,
+} from '@prisma/client';
 import type { User } from '@prisma/client';
 
 import { toCsvRow } from '../../common/csv/csv.util';
@@ -17,6 +22,7 @@ import type { Paginated } from '../../common/interceptors/transform.interceptor'
 import { formatMoney, toMoney } from '../../common/money/money.util';
 import { splitFullName } from '../../common/text/split-full-name.util';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
+import { TransactionsService } from '../transactions/transactions.service';
 
 import { AdjustBalanceDto } from './dto/adjust-balance.dto';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -157,7 +163,13 @@ function toCsvValues(user: User): (string | number | boolean | Date | null)[] {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly repository: UsersRepository) {}
+  constructor(
+    private readonly repository: UsersRepository,
+    // The single writer of `User.balance`. UsersService no longer touches the
+    // column: `applyBalanceDelta` was removed from UsersRepository so there is
+    // no second way in.
+    private readonly transactions: TransactionsService,
+  ) {}
 
   async findAll(query: QueryUsersDto): Promise<Paginated<UserListItem[]>> {
     const args = this.buildListArgs(query);
@@ -335,10 +347,24 @@ export class UsersService {
     return { userId: user.id, balance: formatMoney(user.balance) };
   }
 
+  /**
+   * Credits or debits a balance, through the ledger.
+   *
+   * Phase 6 moved the write itself into `TransactionsService`, which is the
+   * only thing in the codebase permitted to touch `User.balance`
+   * (docs/02-DATA-MODEL.md, "Balance integrity rules"). The response shape and
+   * both error messages are unchanged; what changed is that the adjustment now
+   * leaves an `ADJUSTMENT` row behind it, so the integrity check can see it.
+   *
+   * The pre-check below is kept even though the ledger repeats it inside the
+   * UPDATE: it is what produces the specific "X available, Y would leave Z"
+   * message, and it means the common case never reaches the database. The
+   * ledger's own guard is what closes the race between the two.
+   */
   async adjustBalance(
     id: string,
     dto: AdjustBalanceDto,
-    _admin: AuthenticatedAdmin,
+    admin: AuthenticatedAdmin,
   ): Promise<BalanceAdjustment> {
     const user = await this.getOrThrow(id);
     this.assertNotDeleted(user, 'adjust the balance of');
@@ -354,27 +380,23 @@ export class UsersService {
       );
     }
 
-    // A debit may only proceed while the balance still covers it. Repeating the
-    // check inside the UPDATE closes the window between the read above and the
-    // write, so two concurrent debits cannot jointly overdraw the account.
-    const minimumBalance = amount.isNegative() ? amount.negated() : toMoney(0);
-    const affected = await this.repository.applyBalanceDelta(
-      id,
+    const entry = await this.transactions.record({
+      userId: id,
+      type: TransactionType.ADJUSTMENT,
       amount,
-      minimumBalance,
-    );
-
-    if (affected === 0) {
-      throw new UnprocessableEntityException(
+      description: dto.reason,
+      createdByAdminId: admin.id,
+      // Reached only when a concurrent movement consumed the balance between
+      // the check above and the guarded UPDATE inside the ledger.
+      insufficientBalanceMessage:
         'The balance changed while this adjustment was being applied. Retry it.',
-      );
-    }
+    });
 
     return {
       userId: id,
-      previousBalance: formatMoney(previous),
-      amount: formatMoney(amount),
-      balance: formatMoney(next),
+      previousBalance: entry.balanceBefore,
+      amount: entry.amount,
+      balance: entry.balanceAfter,
       reason: dto.reason,
     };
   }

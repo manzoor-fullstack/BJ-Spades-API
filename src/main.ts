@@ -1,10 +1,13 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { setupSwagger } from './config/swagger.config';
+import { applyStaticAssets } from './modules/storage/static-assets';
+import { applyStripeRawBodyParser } from './modules/stripe/stripe-raw-body';
 import { applyWebhookRawBodyParser } from './modules/webhooks/webhook-raw-body';
 
 function parseCorsOrigins(raw: string | undefined): string[] | false {
@@ -20,7 +23,11 @@ function parseCorsOrigins(raw: string | undefined): string[] | false {
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // Typed as NestExpressApplication for `useStaticAssets`, which serves
+  // UPLOAD_DIR at /uploads (Phase 4.7).
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
 
   const config = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
@@ -36,6 +43,15 @@ async function bootstrap(): Promise<void> {
   // were actually signed. Scoped to /api/webhooks; the rest of the API keeps
   // Nest's default body handling untouched.
   applyWebhookRawBodyParser(app);
+
+  // Same concern, different path: Stripe signs the raw bytes of its webhook
+  // body, and Nest's parser would hand the controller a re-serialised object.
+  applyStripeRawBodyParser(app);
+
+  // After the raw-body hook, before the global prefix: uploads are served at
+  // /uploads, outside the /api namespace, because express.static is registered
+  // on the Express instance and never sees setGlobalPrefix.
+  applyStaticAssets(app);
 
   app.setGlobalPrefix('api');
 

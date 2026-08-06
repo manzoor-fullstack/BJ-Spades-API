@@ -150,27 +150,11 @@ export class UsersRepository {
     return this.prisma.user.update({ where: { id }, data });
   }
 
-  /**
-   * Applies a signed delta in a single statement, refusing the update when the
-   * balance is no longer high enough to absorb it.
-   *
-   * Read-then-write would let two concurrent debits both pass a "would this go
-   * negative?" check and jointly overdraw the account. The `gte` guard makes
-   * the check and the write one atomic operation; a return of 0 means the guard
-   * rejected it.
-   */
-  async applyBalanceDelta(
-    id: string,
-    amount: Money,
-    minimumBalance: Money,
-  ): Promise<number> {
-    const result = await this.prisma.user.updateMany({
-      where: { id, deletedAt: null, balance: { gte: minimumBalance } },
-      data: { balance: { increment: amount } },
-    });
-
-    return result.count;
-  }
+  // `applyBalanceDelta` lived here until Phase 6. It was the second writer of
+  // `User.balance` and is gone deliberately: every movement now goes through
+  // `TransactionsService`, so each one leaves a ledger row and
+  // `verifyLedgerIntegrity` can prove the column and the ledger agree
+  // (docs/02-DATA-MODEL.md, "Balance integrity rules"). Do not reintroduce it.
 
   private async groupBy(
     field: 'status' | 'source' | 'tier',

@@ -1,9 +1,10 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { hashToken } from '../../../common/crypto/token-hash.util';
 import { PasswordService } from '../../../common/password/password.service';
 import { ActivityLogService } from '../../activity/activity.service';
+import { SettingsService } from '../../settings/settings.service';
 import { AuthService } from '../auth.service';
 import { AuthRepository } from '../repositories/auth.repository';
 import { TokenService } from '../services/token.service';
@@ -36,6 +37,7 @@ describe('AuthService', () => {
   let passwords: Mocked<PasswordService>;
   let tokens: Mocked<TokenService>;
   let activityLog: Pick<Mocked<ActivityLogService>, 'record'>;
+  let settings: Pick<Mocked<SettingsService>, 'getSessionTimeoutMinutes'>;
 
   beforeEach(async () => {
     repository = {
@@ -48,9 +50,12 @@ describe('AuthService', () => {
       findSessionById: jest.fn(),
       findSessionWithAdmin: jest.fn(),
       findActiveSessionsForAdmin: jest.fn(),
+      findAllActiveSessions: jest.fn().mockResolvedValue([]),
+      countActiveSessions: jest.fn().mockResolvedValue(0),
       touchSession: jest.fn(),
       revokeSession: jest.fn().mockResolvedValue(undefined),
       revokeAllSessionsForAdmin: jest.fn().mockResolvedValue(undefined),
+      revokeAllSessionsExcept: jest.fn().mockResolvedValue(0),
       createRefreshToken: jest.fn().mockResolvedValue(undefined),
       findRefreshTokenByHash: jest.fn(),
       rotateRefreshToken: jest.fn().mockResolvedValue(undefined),
@@ -80,12 +85,17 @@ describe('AuthService', () => {
 
     activityLog = { record: jest.fn().mockResolvedValue(undefined) };
 
+    settings = {
+      getSessionTimeoutMinutes: jest.fn().mockResolvedValue(10080),
+    };
+
     service = new AuthService(
       repository as unknown as AuthRepository,
       passwords as unknown as PasswordService,
       tokens as unknown as TokenService,
       config,
       activityLog as unknown as ActivityLogService,
+      settings as unknown as SettingsService,
     );
 
     await service.onModuleInit();
@@ -120,6 +130,59 @@ describe('AuthService', () => {
       expect(repository.createSession).toHaveBeenCalledWith(
         expect.objectContaining({ adminId: ADMIN.id }),
       );
+    });
+
+    // D-10: the session timeout is a real duration, not a toggle. If this
+    // stopped being read, the settings field would go back to being a number
+    // nothing acts on.
+    it('expires the session after the configured session timeout', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-06T00:00:00.000Z'));
+
+      repository.findAdminByEmail.mockResolvedValue(ADMIN);
+      passwords.compare.mockResolvedValue(true);
+      settings.getSessionTimeoutMinutes.mockResolvedValue(30);
+
+      await service.login({ email: ADMIN.email, password: 'Admin123!' });
+
+      const calls = repository.createSession.mock.calls as Array<
+        [{ expiresAt: Date }]
+      >;
+
+      expect(calls[0]?.[0]?.expiresAt.toISOString()).toBe(
+        '2026-08-06T00:30:00.000Z',
+      );
+
+      jest.useRealTimers();
+    });
+
+    it('falls back to the refresh window when settings cannot be read', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-06T00:00:00.000Z'));
+
+      repository.findAdminByEmail.mockResolvedValue(ADMIN);
+      passwords.compare.mockResolvedValue(true);
+      settings.getSessionTimeoutMinutes.mockRejectedValue(
+        new Error('settings unavailable'),
+      );
+
+      // The fallback path deliberately warns; keep the suite output readable.
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await service.login({ email: ADMIN.email, password: 'Admin123!' });
+
+      const calls = repository.createSession.mock.calls as Array<
+        [{ expiresAt: Date }]
+      >;
+
+      // jwt.refreshExpiresIn is mocked to '7d'.
+      expect(calls[0]?.[0]?.expiresAt.toISOString()).toBe(
+        '2026-08-13T00:00:00.000Z',
+      );
+      expect(warn).toHaveBeenCalled();
+
+      warn.mockRestore();
+      jest.useRealTimers();
     });
 
     it('stores the refresh token as a hash, never in plaintext', async () => {

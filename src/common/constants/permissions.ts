@@ -16,7 +16,9 @@ export const PERMISSION_CODES = {
   ROLES_MANAGE: 'roles.manage',
   ACTIVITY_VIEW: 'activity.view',
   SECURITY_MANAGE: 'security.manage',
+  SECURITY_READ: 'security.read',
   SETTINGS_MANAGE: 'settings.manage',
+  SETTINGS_READ: 'settings.read',
 } as const;
 
 export type PermissionCode =

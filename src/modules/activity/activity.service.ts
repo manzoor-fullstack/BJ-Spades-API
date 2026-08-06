@@ -54,10 +54,29 @@ const SORTABLE_FIELDS = [
 const DEFAULT_SORT_FIELD = 'createdAt';
 
 /**
- * docs/phases/PHASE-2.md, "Retention". Phase 7 moves this into `Setting` so it
- * is configurable rather than compiled in.
+ * docs/phases/PHASE-2.md, "Retention". The compiled-in default, and the window
+ * in force before settings have been loaded.
  */
 export const ACTIVITY_RETENTION_DAYS = 180;
+
+/**
+ * The retention window actually in force.
+ *
+ * Phase 7 makes this configurable through `activity.retentionDays`.
+ * `SettingsService` pushes the stored value in here when it loads its snapshot,
+ * at boot and after every save. Held as module state rather than injected so
+ * that ActivityModule — which every other module already depends on — does not
+ * acquire a dependency on SettingsModule in the other direction.
+ */
+let configuredRetentionDays = ACTIVITY_RETENTION_DAYS;
+
+export function setActivityRetentionDays(days: number): void {
+  configuredRetentionDays = days;
+}
+
+export function getActivityRetentionDays(): number {
+  return configuredRetentionDays;
+}
 
 const MS_PER_DAY = 86_400_000;
 
@@ -140,12 +159,14 @@ export class ActivityLogService {
   /**
    * Deletes entries older than the retention window and returns how many went.
    *
-   * Not scheduled: `@nestjs/schedule` is deliberately not a dependency yet, so
-   * this is invoked from a maintenance script or a platform cron until Phase 7
-   * introduces the scheduler alongside the configurable window.
+   * Defaults to the configured `activity.retentionDays` setting, which falls
+   * back to ACTIVITY_RETENTION_DAYS until settings have been loaded.
+   *
+   * Not scheduled: `@nestjs/schedule` is deliberately not a dependency, so this
+   * is invoked from a maintenance script or a platform cron.
    */
   async pruneOlderThan(
-    days: number = ACTIVITY_RETENTION_DAYS,
+    days: number = getActivityRetentionDays(),
   ): Promise<number> {
     const cutoff = new Date(Date.now() - days * MS_PER_DAY);
     const deleted = await this.repository.deleteOlderThan(cutoff);

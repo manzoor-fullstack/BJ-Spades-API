@@ -3,7 +3,12 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { UserSource, UserStatus, UserTier } from '@prisma/client';
+import {
+  StripeAccountStatus,
+  UserSource,
+  UserStatus,
+  UserTier,
+} from '@prisma/client';
 import type { User } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -23,8 +28,11 @@ import type {
 } from '../repositories/users.repository';
 import { UsersRepository } from '../repositories/users.repository';
 import { UsersService } from '../users.service';
+import type { TransactionsService } from '../../transactions/transactions.service';
+import type { TransactionItem } from '../../transactions/serializers/transaction.serializer';
 
 type MockedRepository = { [K in keyof UsersRepository]: jest.Mock };
+type MockedTransactions = { [K in keyof TransactionsService]: jest.Mock };
 
 /**
  * Typed view of what a mock was called with.
@@ -66,6 +74,9 @@ const BASE_USER: User = {
   lastActiveAt: null,
   createdByAdminId: ADMIN.id,
   webhookEventId: null,
+  // Added by the Phase 6 schema; a Prisma `User` now includes these.
+  stripeConnectAccountId: null,
+  stripeAccountStatus: StripeAccountStatus.NOT_CONNECTED,
   deletedAt: null,
   createdAt: new Date('2026-06-01T10:00:00.000Z'),
   updatedAt: new Date('2026-06-01T10:00:00.000Z'),
@@ -73,6 +84,39 @@ const BASE_USER: User = {
 
 function makeUser(overrides: Partial<User> = {}): User {
   return { ...BASE_USER, ...overrides };
+}
+
+/** What UsersService hands the ledger. */
+interface LedgerCall {
+  userId: string;
+  type: string;
+  amount: unknown;
+  description?: string;
+  createdByAdminId?: string;
+  insufficientBalanceMessage?: string;
+}
+
+function ledgerRow(
+  input: LedgerCall,
+  before: Money,
+  amount: Money,
+  after: Money,
+): TransactionItem {
+  return {
+    id: 'transaction-1',
+    userId: input.userId,
+    type: 'ADJUSTMENT',
+    status: 'COMPLETED',
+    amount: amount.toFixed(2),
+    balanceBefore: before.toFixed(2),
+    balanceAfter: after.toFixed(2),
+    description: input.description ?? null,
+    reference: null,
+    tournamentId: null,
+    payoutId: null,
+    createdByAdminId: input.createdByAdminId ?? null,
+    createdAt: new Date('2026-08-06T00:00:00.000Z'),
+  };
 }
 
 /** Builds a QueryUsersDto the way the ValidationPipe would, defaults included. */
@@ -93,6 +137,7 @@ function createDto(overrides: Partial<CreateUserDto> = {}): CreateUserDto {
 describe('UsersService', () => {
   let service: UsersService;
   let repository: MockedRepository;
+  let transactions: MockedTransactions;
 
   beforeEach(() => {
     repository = {
@@ -111,14 +156,43 @@ describe('UsersService', () => {
         .mockImplementation((id: string, data: UpdateUserData) =>
           Promise.resolve(makeUser({ id, ...data })),
         ),
-      applyBalanceDelta: jest.fn().mockResolvedValue(1),
       countByStatus: jest.fn().mockResolvedValue([]),
       countBySource: jest.fn().mockResolvedValue([]),
       countByTier: jest.fn().mockResolvedValue([]),
       countCreatedSince: jest.fn().mockResolvedValue(0),
     };
 
-    service = new UsersService(repository as unknown as UsersRepository);
+    // Phase 6: the balance is no longer written by UsersRepository. The fake
+    // stands in for the ledger and reproduces its arithmetic — including the
+    // below-zero refusal — so the assertions below still describe what the
+    // endpoint does, not how it is plumbed.
+    transactions = {
+      record: jest.fn().mockImplementation(async (input: LedgerCall) => {
+        const user = (await repository.findById(input.userId)) as User | null;
+        const before = toMoney(user?.balance ?? 0);
+        const amount = toMoney(input.amount as string | number);
+        const after = before.plus(amount);
+
+        if (after.isNegative()) {
+          throw new UnprocessableEntityException(
+            input.insufficientBalanceMessage ?? 'Insufficient balance',
+          );
+        }
+
+        return ledgerRow(input, before, amount, after);
+      }),
+      recordMany: jest.fn().mockResolvedValue([]),
+      findAll: jest.fn(),
+      hasReference: jest.fn().mockResolvedValue(false),
+      verifyLedgerIntegrity: jest
+        .fn()
+        .mockResolvedValue({ checked: 0, balanced: true, issues: [] }),
+    };
+
+    service = new UsersService(
+      repository as unknown as UsersRepository,
+      transactions as unknown as TransactionsService,
+    );
   });
 
   /** The filter the service actually handed the repository. */
@@ -661,7 +735,9 @@ describe('UsersService', () => {
         service.adjustBalance('user-1', adjust(-100.01), ADMIN),
       ).rejects.toBeInstanceOf(UnprocessableEntityException);
 
-      expect(repository.applyBalanceDelta).not.toHaveBeenCalled();
+      // Refused before the ledger is touched, so nothing is written and the
+      // caller gets the specific "X available, Y would leave Z" message.
+      expect(transactions.record).not.toHaveBeenCalled();
     });
 
     it('allows a debit that lands exactly on zero', async () => {
@@ -674,39 +750,38 @@ describe('UsersService', () => {
       expect(result.balance).toBe('0.00');
     });
 
-    it('guards the write with the minimum balance the debit needs', async () => {
+    it('writes the adjustment through the ledger, signed and attributed', async () => {
       repository.findById.mockResolvedValue(
         makeUser({ balance: toMoney('100.00') }),
       );
 
       await service.adjustBalance('user-1', adjust(-40), ADMIN);
 
-      const call = callsOf<[string, Money, Money]>(
-        repository.applyBalanceDelta,
-      )[0];
+      const call = callsOf<[LedgerCall]>(transactions.record)[0]?.[0];
 
-      expect(call?.[0]).toBe('user-1');
-      expect(call?.[1].toFixed(2)).toBe('-40.00');
-      expect(call?.[2].toFixed(2)).toBe('40.00');
+      expect(call?.userId).toBe('user-1');
+      expect(call?.type).toBe('ADJUSTMENT');
+      expect(toMoney(call?.amount as number).toFixed(2)).toBe('-40.00');
+      expect(call?.createdByAdminId).toBe(ADMIN.id);
+      // The reason is mandatory on the DTO and is what the ledger row says.
+      expect(call?.description).toBe('Chargeback #1234');
     });
 
-    it('requires no minimum for a credit', async () => {
-      repository.findById.mockResolvedValue(makeUser({ balance: toMoney(0) }));
-
-      await service.adjustBalance('user-1', adjust(10), ADMIN);
-
-      const minimum = callsOf<[string, Money, Money]>(
-        repository.applyBalanceDelta,
-      )[0]?.[2];
-
-      expect(minimum?.toFixed(2)).toBe('0.00');
+    it('never writes User.balance itself — the ledger is the only writer', () => {
+      // The property is gone from the repository entirely; if it comes back,
+      // this fails to compile rather than failing at runtime.
+      expect('applyBalanceDelta' in repository).toBe(false);
     });
 
     it('reports 422 when a concurrent change made the guarded update a no-op', async () => {
       repository.findById.mockResolvedValue(
         makeUser({ balance: toMoney('100.00') }),
       );
-      repository.applyBalanceDelta.mockResolvedValue(0);
+      transactions.record.mockRejectedValue(
+        new UnprocessableEntityException(
+          'The balance changed while this adjustment was being applied. Retry it.',
+        ),
+      );
 
       await expect(
         service.adjustBalance('user-1', adjust(-10), ADMIN),
@@ -729,17 +804,22 @@ describe('UsersService', () => {
       repository.findById.mockImplementation(() =>
         Promise.resolve(makeUser({ balance })),
       );
-      repository.applyBalanceDelta.mockImplementation(
-        (_id: string, amount: Money) => {
-          balance = balance.plus(amount);
-          return Promise.resolve(1);
-        },
-      );
+      transactions.record.mockImplementation((input: LedgerCall) => {
+        const before = balance;
+        const amount = toMoney(input.amount as number);
+
+        balance = before.plus(amount);
+
+        return Promise.resolve(ledgerRow(input, before, amount, balance));
+      });
 
       for (let i = 0; i < 10; i += 1) {
         await service.adjustBalance('user-1', adjust(0.1), ADMIN);
       }
 
+      // 0.1 added ten times is exactly 1.00 through Decimal; as a float it is
+      // 0.9999999999999999, which is the accounting discrepancy nobody can
+      // reconcile six months later.
       expect(balance.toFixed(2)).toBe('1.00');
     });
 

@@ -13,6 +13,7 @@ import { hashToken, randomHex } from '../../common/crypto/token-hash.util';
 import { RequestContext } from '../../common/http/request-context.util';
 import { PasswordService } from '../../common/password/password.service';
 import { ActivityLogService } from '../activity/activity.service';
+import { SettingsService } from '../settings/settings.service';
 
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
@@ -40,6 +41,7 @@ export class AuthService implements OnModuleInit {
     private readonly tokenService: TokenService,
     private readonly configService: ConfigService,
     private readonly activityLog: ActivityLogService,
+    private readonly settings: SettingsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -87,7 +89,7 @@ export class AuthService implements OnModuleInit {
 
     const session = await this.authRepository.createSession({
       adminId: admin.id,
-      expiresAt: this.refreshExpiryDate(),
+      expiresAt: await this.sessionExpiryDate(),
       device: context.device,
       browser: context.browser,
       os: context.os,
@@ -343,6 +345,34 @@ export class AuthService implements OnModuleInit {
       refreshToken: refresh.token,
       expiresIn: this.accessExpiresInSeconds(),
     };
+  }
+
+  /**
+   * How long the session created by this login stays valid.
+   *
+   * Driven by the `security.sessionTimeoutMinutes` setting (Phase 7, D-10),
+   * which is what makes that field a real control rather than a stored number:
+   * `JwtStrategy` checks `Session.expiresAt` on every request, so shortening
+   * the timeout genuinely shortens the next session.
+   *
+   * `jwt.refreshExpiresIn` still bounds the refresh token itself and is the
+   * fallback if settings cannot be read — a login must not fail because the
+   * settings table is unavailable.
+   */
+  private async sessionExpiryDate(): Promise<Date> {
+    try {
+      const minutes = await this.settings.getSessionTimeoutMinutes();
+
+      return new Date(Date.now() + minutes * 60_000);
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the configured session timeout; falling back to jwt.refreshExpiresIn: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return this.refreshExpiryDate();
+    }
   }
 
   private refreshExpiryDate(): Date {

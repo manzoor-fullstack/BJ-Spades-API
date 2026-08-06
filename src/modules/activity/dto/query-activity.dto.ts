@@ -14,22 +14,7 @@ import {
 } from 'class-validator';
 
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
-
-/**
- * Query strings carry `"true"`, not `true`. Written out rather than left to
- * implicit conversion, which treats every non-empty string as truthy and would
- * make `?isHighPriority=false` filter to the high-priority rows.
- */
-function toBoolean({ value }: { value: unknown }): unknown {
-  if (typeof value === 'string') {
-    const normalised = value.trim().toLowerCase();
-
-    if (normalised === 'true') return true;
-    if (normalised === 'false') return false;
-  }
-
-  return value;
-}
+import { toBooleanFlag } from '../../../common/dto/enum-token.transform';
 
 export class QueryActivityDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: ActivityCategory })
@@ -54,7 +39,7 @@ export class QueryActivityDto extends PaginationQueryDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Transform(toBoolean)
+  @Transform(toBooleanFlag)
   @IsBoolean()
   isHighPriority?: boolean;
 

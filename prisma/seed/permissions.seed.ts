@@ -58,9 +58,19 @@ const PERMISSIONS = [
     description: 'Manage active sessions and security settings',
   },
   {
+    name: 'View Security',
+    code: PERMISSION_CODES.SECURITY_READ,
+    description: 'View security alerts and statistics',
+  },
+  {
     name: 'Manage Settings',
     code: PERMISSION_CODES.SETTINGS_MANAGE,
     description: 'Manage application settings',
+  },
+  {
+    name: 'View Settings',
+    code: PERMISSION_CODES.SETTINGS_READ,
+    description: 'View application settings',
   },
 ] as const;
 

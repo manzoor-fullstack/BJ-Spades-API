@@ -28,3 +28,26 @@ export function formatMoney(value: MoneyInput): string {
 export function isNegativeMoney(value: MoneyInput): boolean {
   return toMoney(value).isNegative();
 }
+
+/**
+ * A non-negative amount with at most two decimal places, as a string.
+ *
+ * Money is a string on the way in as well as on the way out. It reaches a
+ * `NUMERIC(18,2)` column whose range exceeds what an IEEE-754 double holds
+ * exactly, so parsing it as a number first would quietly round it. The pattern
+ * also does the rejecting that the column would otherwise do silently: Postgres
+ * *rounds* a third decimal rather than refusing it, so `19.999` would be stored
+ * as `20.00` and the client would never learn its price changed.
+ *
+ * A leading `-` simply does not match, which is what rejects negatives.
+ *
+ * `create-tournament.dto.ts` carries its own copy predating this one; Phase 5 is
+ * not permitted to touch the tournaments module, so the two are reconciled when
+ * that file is next edited.
+ */
+export const MONEY_PATTERN = /^\d{1,16}(\.\d{1,2})?$/;
+
+/** True when a string is a well-formed, non-negative two-decimal amount. */
+export function isValidMoneyString(value: string): boolean {
+  return MONEY_PATTERN.test(value);
+}

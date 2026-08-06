@@ -1,0 +1,201 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiExcludeEndpoint,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
+import { ActivityCategory } from '@prisma/client';
+import type { Request } from 'express';
+
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
+import { PERMISSION_CODES } from '../../common/constants/permissions';
+import {
+  AuditLog,
+  readString,
+  type AuditContext,
+} from '../../common/decorators/audit-log.decorator';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { CurrentAdmin } from '../auth/decorators/current-admin.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
+import type { RawBodyRequest } from '../webhooks/webhook-raw-body';
+
+import { CancelPayoutDto } from './dto/payout-action.dto';
+import { QueryPayoutsDto } from './dto/query-payouts.dto';
+import { PayoutsService } from './payouts.service';
+
+/** The audited subject: the amount and recipient, not a bare UUID. */
+function payoutLabel(ctx: AuditContext, result: unknown): string {
+  const amount = readString(result, 'amount');
+
+  return amount ? `${amount}` : (ctx.params.id ?? 'payout');
+}
+
+function payoutId(ctx: AuditContext, result: unknown): string | undefined {
+  return readString(result, 'id') ?? ctx.params.id;
+}
+
+/**
+ * Route order is significant. `stats` and the two `stripe/*` routes are
+ * declared before `:id` because Nest matches in declaration order — declared
+ * after, `GET /payouts/stats` would be served by `findOne('stats')` and fail
+ * the UUID pipe.
+ */
+@ApiTags('payouts')
+@ApiBearerAuth('access-token')
+@Controller('payouts')
+export class PayoutsController {
+  constructor(private readonly payoutsService: PayoutsService) {}
+
+  /**
+   * Declared first of all: `@Public()`, and it must never be shadowed by an
+   * authenticated route. Stripe's signature is the only credential it carries.
+   */
+  @Public()
+  @Post('stripe/webhook')
+  @HttpCode(HttpStatus.OK)
+  @ApiExcludeEndpoint()
+  handleStripeWebhook(
+    @Req() request: Request & RawBodyRequest,
+    @Headers('stripe-signature') signature: string | undefined,
+  ) {
+    // The RAW bytes, captured by applyStripeRawBodyParser before Nest's own
+    // parser ran. Verifying against `request.body` would re-serialise the
+    // payload and fail every signature check.
+    return this.payoutsService.handleWebhook(request.rawBody, signature);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get()
+  @ApiOperation({
+    summary:
+      'List payouts with pagination, status/method/user/tournament filters, ' +
+      'a date range over owedSince, and search across recipient and tournament',
+  })
+  findAll(@Query() query: QueryPayoutsDto) {
+    return this.payoutsService.findAll(query);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('stats')
+  @ApiOperation({
+    summary:
+      'Aggregates powering the payout cards. Every money figure is a ' +
+      'two-decimal string. No escrow figure — see D-12.',
+  })
+  stats() {
+    return this.payoutsService.stats();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.PAYOUT,
+    action: ACTIVITY_ACTIONS.PAYOUT_STRIPE_ONBOARDING_STARTED.code,
+    title: (ctx) => `Stripe onboarding started for user ${ctx.params.userId}`,
+    entityType: 'User',
+    entityId: (ctx) => ctx.params.userId,
+  })
+  @Post('stripe/onboard/:userId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Create the Stripe Express account if absent and return a hosted ' +
+      'onboarding link. The admin sends the link out of band — Milestone 1 ' +
+      'has no player app to redirect into.',
+  })
+  onboard(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ) {
+    return this.payoutsService.createOnboardingLink(userId, admin);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get(':id')
+  @ApiOperation({ summary: 'Fetch one payout' })
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.payoutsService.findOne(id);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.PAYOUT,
+    action: ACTIVITY_ACTIONS.PAYOUT_APPROVED.code,
+    title: (ctx, result) => `Payout of ${payoutLabel(ctx, result)} approved`,
+    entityType: 'Payout',
+    entityId: payoutId,
+  })
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Approve a payout for sending. Approval moves no money — that is /process.',
+  })
+  approve(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ) {
+    return this.payoutsService.approve(id, admin);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.PAYOUT,
+    action: ACTIVITY_ACTIONS.PAYOUT_PROCESSED.code,
+    title: (ctx, result) => `Payout of ${payoutLabel(ctx, result)} processed`,
+    entityType: 'Payout',
+    entityId: payoutId,
+    metadata: (_ctx, result) => ({
+      stripeTransferId: readString(result, 'stripeTransferId'),
+      amount: readString(result, 'amount'),
+    }),
+  })
+  @Post(':id/process')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Execute the Stripe Connect transfer. Requires APPROVED, a VERIFIED ' +
+      'recipient, no existing transfer, and a positive amount — each a 422 ' +
+      'with its own message.',
+  })
+  process(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ) {
+    return this.payoutsService.process(id, admin);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.PAYOUT,
+    action: ACTIVITY_ACTIONS.PAYOUT_CANCELLED.code,
+    title: (ctx, result) => `Payout of ${payoutLabel(ctx, result)} cancelled`,
+    entityType: 'Payout',
+    entityId: payoutId,
+  })
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cancel a payout that has not been sent. A reason is required.',
+  })
+  cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() cancelPayoutDto: CancelPayoutDto,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ) {
+    return this.payoutsService.cancel(id, cancelPayoutDto, admin);
+  }
+}

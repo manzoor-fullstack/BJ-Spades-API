@@ -9,6 +9,8 @@ import { seedRolePermissions } from './role-permissions.seed';
 import { seedRoles } from './roles.seed';
 import { seedAdmin } from './admin.seed';
 import { seedUsers } from './users.seed';
+import { seedTournaments } from './tournaments.seed';
+import { seedRewards } from './rewards.seed';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -27,6 +29,11 @@ async function main() {
   await seedAdmin(prisma);
   // Must run after seedAdmin: admin-created users reference its id.
   await seedUsers(prisma);
+  // Must run after seedUsers and seedAdmin: tournaments are created by the
+  // super admin and their registrations reference seeded users.
+  await seedTournaments(prisma);
+  // Must run after seedAdmin: every reward and product records its creator.
+  await seedRewards(prisma);
 
   console.log('🎉 Database Seed Completed');
 }

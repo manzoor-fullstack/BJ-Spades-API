@@ -80,6 +80,31 @@ describe('activity action catalogue', () => {
     'role.updated': 'Role updated',
     'role.deleted': 'Role deleted',
     'role.permissions_changed': 'Role permissions changed',
+    'tournament.created': 'Tournament created',
+    'tournament.updated': 'Tournament updated',
+    'tournament.cancelled': 'Tournament cancelled',
+    'tournament.deleted': 'Tournament deleted',
+    'tournament.player_registered': 'Player registered for tournament',
+    'tournament.player_removed': 'Player removed from tournament',
+    'tournament.results_submitted': 'Tournament results submitted',
+    'reward.created': 'Reward created',
+    'reward.updated': 'Reward updated',
+    'reward.deleted': 'Reward deleted',
+    'merchandise.created': 'Merchandise created',
+    'merchandise.updated': 'Merchandise updated',
+    'merchandise.deleted': 'Merchandise deleted',
+    'merchandise.variant_added': 'Merchandise variant added',
+    'merchandise.variant_updated': 'Merchandise variant updated',
+    'merchandise.variant_removed': 'Merchandise variant removed',
+    'payout.approved': 'Payout approved',
+    'payout.processed': 'Payout processed',
+    'payout.cancelled': 'Payout cancelled',
+    'payout.failed': 'Payout failed',
+    'payout.stripe_onboarding_started': 'Stripe onboarding link generated',
+    'payout.stripe_account_updated': 'Stripe account status updated',
+    'transaction.balance_adjusted': 'Ledger balance adjusted',
+    'settings.updated': 'Settings updated',
+    'security.session_revoked': 'Session revoked by an administrator',
     'webhook.user_created': 'User registered via webhook',
     'webhook.failed': 'Webhook processing failed',
   };
@@ -99,6 +124,31 @@ describe('activity action catalogue', () => {
     'admin.role_changed',
     'role.deleted',
     'role.permissions_changed',
+    // Cancellation refunds entry fees from Phase 6; deletion cascades to every
+    // registration. Both are destructive in a way the other tournament events
+    // are not.
+    'tournament.cancelled',
+    'tournament.deleted',
+    // Both catalogue deletes remove an offer players may already have seen.
+    // `merchandise.variant_removed` joins them because a variant has no
+    // `deletedAt` — it is a hard delete that takes its SKU and stock with it.
+    'reward.deleted',
+    'merchandise.deleted',
+    'merchandise.variant_removed',
+    // Every payout and ledger event without exception: these are the only rows
+    // that correspond to money moving, and a wrong transfer is unrecoverable.
+    'payout.approved',
+    'payout.processed',
+    'payout.cancelled',
+    'payout.failed',
+    'payout.stripe_onboarding_started',
+    'payout.stripe_account_updated',
+    'transaction.balance_adjusted',
+    // A settings change alters how the platform behaves — how long a session
+    // lives, how long the audit trail itself is kept. A revocation ends
+    // someone's access. Both belong in the feed the security page reads.
+    'settings.updated',
+    'security.session_revoked',
     'webhook.failed',
   ];
 
@@ -114,6 +164,10 @@ describe('activity action catalogue', () => {
     'role.updated': ActivityCategory.ADMIN,
     'role.deleted': ActivityCategory.ADMIN,
     'role.permissions_changed': ActivityCategory.ADMIN,
+    // ActivityCategory has no TRANSACTION member and Phase 6 changes no schema,
+    // so ledger events are filed under PAYOUT — the money category, and where an
+    // operator chasing a balance movement would look.
+    'transaction.balance_adjusted': ActivityCategory.PAYOUT,
   };
 
   it('every catalogued code produces the expected title', () => {

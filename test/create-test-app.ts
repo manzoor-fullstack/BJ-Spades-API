@@ -1,8 +1,23 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 
 import { AppModule } from '../src/app.module';
+import { applyStaticAssets } from '../src/modules/storage/static-assets';
+import { applyStripeRawBodyParser } from '../src/modules/stripe/stripe-raw-body';
 import { applyWebhookRawBodyParser } from '../src/modules/webhooks/webhook-raw-body';
+
+/**
+ * One provider swapped out for the duration of a suite.
+ *
+ * The Stripe gateway is the motivating case: it is replaced at the SDK boundary
+ * so no test can reach api.stripe.com, and so the transfer failure and
+ * concurrency paths — the two that matter financially — are reproducible.
+ */
+export interface TestProviderOverride {
+  provide: unknown;
+  useValue: unknown;
+}
 
 export interface TestAppOptions {
   /**
@@ -18,6 +33,9 @@ export interface TestAppOptions {
    * reliably intercept it.
    */
   throttling?: boolean;
+
+  /** Providers to replace, e.g. `{ provide: STRIPE_GATEWAY, useValue: fake }`. */
+  overrides?: readonly TestProviderOverride[];
 }
 
 export async function createTestApp(
@@ -25,17 +43,31 @@ export async function createTestApp(
 ): Promise<INestApplication> {
   process.env.THROTTLE_DISABLED = options.throttling ? 'false' : 'true';
 
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+  let builder = Test.createTestingModule({ imports: [AppModule] });
 
-  const app = moduleRef.createNestApplication();
+  for (const override of options.overrides ?? []) {
+    builder = builder
+      .overrideProvider(override.provide)
+      .useValue(override.useValue);
+  }
+
+  const moduleRef = await builder.compile();
+
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
 
   // Must come before app.init(), exactly as in main.ts: init() is where Nest
   // installs its own JSON parser, and whichever parser is registered first is
   // the one that sees the unparsed bytes. Omitting this here would make the
   // webhook signature tests fail for a reason production does not share.
   applyWebhookRawBodyParser(app);
+
+  // Same reason, for the Stripe webhook path: the signature is computed over
+  // the raw bytes, so the suite must go through the identical middleware.
+  applyStripeRawBodyParser(app);
+
+  // Same order as main.ts, so the integration suite fetches uploaded images
+  // over the identical /uploads path production serves them on.
+  applyStaticAssets(app);
 
   // Mirrors main.ts so tests exercise the same pipe / filter / interceptor
   // stack a real request goes through.
