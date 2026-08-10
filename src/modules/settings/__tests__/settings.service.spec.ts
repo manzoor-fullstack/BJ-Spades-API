@@ -52,16 +52,28 @@ describe('settings registry', () => {
   it('declares every key the update DTO accepts, and no more', () => {
     // The DTO enumerates keys so the global pipe can reject an unknown one; the
     // registry owns the bounds. This is what stops the two drifting apart.
-    const dtoKeys = Object.keys(
-      plainToInstance(
-        UpdateSettingsDto,
-        Object.fromEntries(
-          SETTING_KEYS.map((key) => [key, SETTINGS_REGISTRY[key].default]),
-        ),
-      ),
-    ).sort();
+    //
+    // Checked one key at a time under the SAME `forbidNonWhitelisted` the
+    // global pipe uses. Reading `Object.keys(plainToInstance(...))` instead
+    // does NOT work: class-transformer copies unknown properties straight
+    // through, so a key missing its DTO property still shows up and the guard
+    // passes while `PUT /settings` rejects that key with 400. That gap let a
+    // real bug reach the browser.
+    for (const key of SETTING_KEYS) {
+      const errors = validateSync(
+        plainToInstance(UpdateSettingsDto, {
+          [key]: SETTINGS_REGISTRY[key].default,
+        }),
+        { whitelist: true, forbidNonWhitelisted: true },
+      );
 
-    expect(dtoKeys).toEqual([...SETTING_KEYS].sort());
+      // A failure here names the key: it is in the registry but has no
+      // property on UpdateSettingsDto, so PUT /settings answers 400 for it.
+      expect({ key, rejected: errors.map((error) => error.property) }).toEqual({
+        key,
+        rejected: [],
+      });
+    }
   });
 
   it('accepts every registry default as a valid value for its own key', () => {

@@ -89,6 +89,16 @@ export class UpdateSettingsDto {
   @Max(SETTINGS_REGISTRY['security.sessionTimeoutMinutes'].max)
   'security.sessionTimeoutMinutes'?: number;
 
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Emergency stop. While true, processing a payout is refused with 422.',
+  })
+  @IsOptional()
+  @Transform(toBooleanFlag)
+  @IsBoolean()
+  'payouts.frozen'?: boolean;
+
   @ApiPropertyOptional({ example: 180, minimum: 30, maximum: 730 })
   @IsOptional()
   @IsInt()
