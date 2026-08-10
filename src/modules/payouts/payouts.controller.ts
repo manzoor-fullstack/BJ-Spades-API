@@ -10,15 +10,17 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiExcludeEndpoint,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { ActivityCategory } from '@prisma/client';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 
 import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import { PERMISSION_CODES } from '../../common/constants/permissions';
@@ -99,6 +101,52 @@ export class PayoutsController {
   })
   stats() {
     return this.payoutsService.stats();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('history/export')
+  @ApiOperation({
+    summary:
+      'Stream the payout history as CSV, honouring the same filters. One flat ' +
+      'row per transaction — a spreadsheet wants facts, not nested groups.',
+  })
+  @ApiOkResponse({ description: 'A text/csv attachment.' })
+  async exportHistoryCsv(
+    @Query() query: QueryPayoutsDto,
+    // @Res() puts this handler in library-specific mode: nothing is returned
+    // to Nest, so TransformInterceptor never wraps the body in the JSON
+    // envelope and the client receives raw CSV.
+    @Res() response: Response,
+  ): Promise<void> {
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${this.payoutsService.exportFilename()}"`,
+    );
+
+    for await (const chunk of this.payoutsService.streamHistoryCsv(query)) {
+      response.write(chunk);
+    }
+
+    response.end();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('history/stats')
+  @ApiOperation({ summary: 'The four History cards.' })
+  historyStats() {
+    return this.payoutsService.historyStats();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('history')
+  @ApiOperation({
+    summary:
+      'Lifetime prizes, withdrawals and refunds grouped by player. Paging is ' +
+      'over transactions, not player blocks.',
+  })
+  history(@Query() query: QueryPayoutsDto) {
+    return this.payoutsService.history(query);
   }
 
   @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)

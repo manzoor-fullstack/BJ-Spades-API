@@ -6,6 +6,7 @@ import {
   Prisma,
   StripeAccountStatus,
   TournamentStatus,
+  TransactionStatus,
   TransactionType,
   UserSource,
   UserStatus,
@@ -61,6 +62,12 @@ interface ListBody {
 interface ErrorBody {
   success: false;
   error: { code: string; message: string; requestId: string };
+}
+
+interface HistoryGroupBody {
+  user: { id: string };
+  total: string;
+  transactionCount: number;
 }
 
 interface TrackerBody {
@@ -691,6 +698,113 @@ describe('Payouts API (integration)', () => {
         owedToPlayers: '0.00',
         playersAwaiting: 0,
       });
+    });
+  });
+
+  describe('GET /api/payouts/history', () => {
+    it('groups transactions by player with a summed total', async () => {
+      const user = await seedUser();
+
+      await testPrisma.transaction.createMany({
+        data: [
+          {
+            userId: user.id,
+            type: TransactionType.PRIZE,
+            status: TransactionStatus.COMPLETED,
+            amount: new Prisma.Decimal('800.00'),
+            balanceBefore: new Prisma.Decimal('0.00'),
+            balanceAfter: new Prisma.Decimal('800.00'),
+          },
+          {
+            userId: user.id,
+            type: TransactionType.PRIZE,
+            status: TransactionStatus.COMPLETED,
+            amount: new Prisma.Decimal('200.00'),
+            balanceBefore: new Prisma.Decimal('800.00'),
+            balanceAfter: new Prisma.Decimal('1000.00'),
+          },
+        ],
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/history')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const groups = (response.body as { data: HistoryGroupBody[] }).data;
+      const mine = groups.find((group) => group.user.id === user.id);
+
+      expect(mine).toBeDefined();
+      expect(mine?.transactionCount).toBe(2);
+      expect(mine?.total).toBe('1000.00');
+    });
+
+    it('omits transaction types that are not payout history', async () => {
+      const user = await seedUser();
+
+      await testPrisma.transaction.create({
+        data: {
+          userId: user.id,
+          type: TransactionType.ENTRY_FEE,
+          status: TransactionStatus.COMPLETED,
+          amount: new Prisma.Decimal('-10.00'),
+          balanceBefore: new Prisma.Decimal('10.00'),
+          balanceAfter: new Prisma.Decimal('0.00'),
+        },
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/history')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const groups = (response.body as { data: HistoryGroupBody[] }).data;
+
+      expect(groups.find((group) => group.user.id === user.id)).toBeUndefined();
+    });
+
+    it('reports refunds as a positive figure', async () => {
+      const user = await seedUser();
+
+      await testPrisma.transaction.create({
+        data: {
+          userId: user.id,
+          type: TransactionType.REFUND,
+          status: TransactionStatus.COMPLETED,
+          amount: new Prisma.Decimal('-150.00'),
+          balanceBefore: new Prisma.Decimal('150.00'),
+          balanceAfter: new Prisma.Decimal('0.00'),
+        },
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/history/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const stats = (response.body as { data: { refunded: string } }).data;
+
+      // Stored signed; a card reading "-$150 Refunded" states the sign twice.
+      expect(stats.refunded).toBe('150.00');
+    });
+
+    it('streams a CSV attachment with a header row', async () => {
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/history/export')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.headers['content-type']).toContain('text/csv');
+      expect(response.headers['content-disposition']).toContain('attachment');
+      expect(response.text.split('\n')[0]).toContain('transactionId');
     });
   });
 

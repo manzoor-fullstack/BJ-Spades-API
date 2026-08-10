@@ -18,6 +18,7 @@ import {
 import type { User } from '@prisma/client';
 
 import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
+import { toCsvRow } from '../../common/csv/csv.util';
 import {
   buildPaginationMeta,
   resolveSortField,
@@ -44,6 +45,11 @@ import type {
   PayoutFilter,
   PayoutWithRelations,
 } from './repositories/payouts.repository';
+import { toPlayerHistoryGroups } from './serializers/payout-history.serializer';
+import type {
+  PayoutHistoryStats,
+  PlayerHistoryGroup,
+} from './serializers/payout-history.serializer';
 import { toPayoutTrackerItem } from './serializers/payout-tracker.serializer';
 import type {
   PayoutTrackerItem,
@@ -101,6 +107,24 @@ export interface StripeWebhookResult {
   type: string;
   handled: boolean;
 }
+
+/** Columns of the History CSV export, in order. */
+const HISTORY_CSV_COLUMNS = [
+  'transactionId',
+  'date',
+  'player',
+  'email',
+  'tournament',
+  'amount',
+  'type',
+  'status',
+  'method',
+  'reference',
+] as const;
+
+/** Matches the users export: a bounded stream, not an unbounded table scan. */
+const HISTORY_EXPORT_BATCH = 500;
+const HISTORY_EXPORT_MAX_ROWS = 50_000;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -187,6 +211,97 @@ export class PayoutsService {
 
   async trackerStats(): Promise<PayoutTrackerStats> {
     return this.repository.trackerStats();
+  }
+
+  /**
+   * The History tab: lifetime prizes, withdrawals and refunds, grouped by
+   * player.
+   *
+   * `meta.total` counts transactions, not player blocks — paging is over rows,
+   * because a single player can have more history than one page holds.
+   */
+  async history(
+    query: QueryPayoutsDto,
+  ): Promise<Paginated<PlayerHistoryGroup[]>> {
+    const args = this.historyArgs(query);
+
+    const [rows, total] = await Promise.all([
+      this.repository.findHistory(args),
+      this.repository.countHistory(args),
+    ]);
+
+    return {
+      data: toPlayerHistoryGroups(rows),
+      meta: buildPaginationMeta(total, query.page, query.limit),
+    };
+  }
+
+  async historyStats(): Promise<PayoutHistoryStats> {
+    return this.repository.historyStats();
+  }
+
+  exportFilename(): string {
+    return `payout-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  }
+
+  /**
+   * Streams the history as CSV, one flat row per transaction.
+   *
+   * Flat rather than grouped: a CSV consumed by a spreadsheet wants one row per
+   * fact, and the player columns repeating is what makes it sortable and
+   * pivotable there.
+   */
+  async *streamHistoryCsv(query: QueryPayoutsDto): AsyncGenerator<string> {
+    yield `${toCsvRow([...HISTORY_CSV_COLUMNS])}\n`;
+
+    const base = this.historyArgs(query);
+    let skip = 0;
+
+    while (skip < HISTORY_EXPORT_MAX_ROWS) {
+      const take = Math.min(
+        HISTORY_EXPORT_BATCH,
+        HISTORY_EXPORT_MAX_ROWS - skip,
+      );
+      const rows = await this.repository.findHistory({ ...base, skip, take });
+
+      if (rows.length === 0) break;
+
+      for (const group of toPlayerHistoryGroups(rows)) {
+        for (const entry of group.transactions) {
+          yield `${toCsvRow([
+            entry.id,
+            entry.date,
+            group.user.fullName,
+            group.user.email,
+            entry.tournamentName,
+            entry.amount,
+            entry.type,
+            entry.status,
+            entry.method,
+            entry.reference,
+          ])}\n`;
+        }
+      }
+
+      if (rows.length < take) break;
+      skip += rows.length;
+    }
+  }
+
+  private historyArgs(query: QueryPayoutsDto): {
+    search?: string;
+    from?: Date;
+    to?: Date;
+    skip: number;
+    take: number;
+  } {
+    return {
+      search: query.search?.trim() ? query.search.trim() : undefined,
+      from: query.owedFrom ? parseRangeStart(query.owedFrom) : undefined,
+      to: query.owedTo ? parseRangeEnd(query.owedTo) : undefined,
+      skip: query.skip,
+      take: query.take,
+    };
   }
 
   async payoutTournaments(): Promise<PayoutTournamentOption[]> {

@@ -5,12 +5,18 @@ import {
   PayoutStatus,
   StripeAccountStatus,
   TournamentStatus,
+  TransactionStatus,
   TransactionType,
 } from '@prisma/client';
 import type { Transaction, User } from '@prisma/client';
 
+import { formatMoney, toMoney } from '../../../common/money/money.util';
 import type { Money } from '../../../common/money/money.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  HISTORY_TYPES,
+  type PayoutHistoryStats,
+} from '../serializers/payout-history.serializer';
 import type { PayoutTrackerStats } from '../serializers/payout-tracker.serializer';
 import type { PayoutTournamentOption } from '../serializers/prize-distribution.serializer';
 import { recordLedgerEntry } from '../../transactions/repositories/transactions.repository';
@@ -64,6 +70,17 @@ const DISTRIBUTION_INCLUDE = {
 
 export type RegistrationWithPayout = Prisma.TournamentRegistrationGetPayload<{
   include: typeof DISTRIBUTION_INCLUDE;
+}>;
+
+/** Everything a History row renders, in one query. */
+const HISTORY_INCLUDE = {
+  user: { select: { id: true, firstName: true, lastName: true, email: true } },
+  tournament: { select: { id: true, name: true } },
+  payout: { select: { id: true, method: true, stripeTransferId: true } },
+} satisfies Prisma.TransactionInclude;
+
+export type HistoryTransactionRow = Prisma.TransactionGetPayload<{
+  include: typeof HISTORY_INCLUDE;
 }>;
 
 export interface PayoutFilter {
@@ -268,6 +285,108 @@ export class PayoutsRepository {
       pendingReview,
       playersAwaiting: awaiting.length,
     };
+  }
+
+  /**
+   * Transactions behind the History tab, newest first.
+   *
+   * Ordered by user then date so the serializer's grouping walks contiguous
+   * blocks, and a player's rows are never split across the result.
+   */
+  findHistory(args: {
+    search?: string;
+    from?: Date;
+    to?: Date;
+    skip: number;
+    take: number;
+  }): Promise<HistoryTransactionRow[]> {
+    return this.prisma.transaction.findMany({
+      where: this.historyWhere(args),
+      include: HISTORY_INCLUDE,
+      orderBy: [{ userId: 'asc' }, { createdAt: 'desc' }],
+      skip: args.skip,
+      take: args.take,
+    });
+  }
+
+  countHistory(args: {
+    search?: string;
+    from?: Date;
+    to?: Date;
+  }): Promise<number> {
+    return this.prisma.transaction.count({ where: this.historyWhere(args) });
+  }
+
+  /** The four History cards. */
+  async historyStats(): Promise<PayoutHistoryStats> {
+    const base: Prisma.TransactionWhereInput = {
+      type: { in: [...HISTORY_TYPES] },
+    };
+
+    const [players, transactions, paid, refunded] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where: base,
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+      this.prisma.transaction.count({ where: base }),
+      this.prisma.transaction.aggregate({
+        where: {
+          status: TransactionStatus.COMPLETED,
+          type: { in: [TransactionType.PRIZE, TransactionType.WITHDRAWAL] },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.transaction.aggregate({
+        where: {
+          status: TransactionStatus.COMPLETED,
+          type: TransactionType.REFUND,
+        },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    return {
+      players: players.length,
+      transactions,
+      totalPaid: formatMoney(paid._sum.amount ?? 0),
+      // Reported as a positive figure: refunds are stored signed, and a card
+      // reading "-$2,575 Refunded" states the sign twice.
+      refunded: formatMoney((refunded._sum.amount ?? toMoney(0)).abs()),
+    };
+  }
+
+  private historyWhere(args: {
+    search?: string;
+    from?: Date;
+    to?: Date;
+  }): Prisma.TransactionWhereInput {
+    const where: Prisma.TransactionWhereInput = {
+      type: { in: [...HISTORY_TYPES] },
+    };
+
+    if (args.from || args.to) {
+      where.createdAt = {
+        ...(args.from ? { gte: args.from } : {}),
+        ...(args.to ? { lte: args.to } : {}),
+      };
+    }
+
+    if (args.search) {
+      const contains: Prisma.StringFilter = {
+        contains: args.search,
+        mode: 'insensitive',
+      };
+
+      where.OR = [
+        { user: { firstName: contains } },
+        { user: { lastName: contains } },
+        { user: { email: contains } },
+        { tournament: { name: contains } },
+      ];
+    }
+
+    return where;
   }
 
   /**

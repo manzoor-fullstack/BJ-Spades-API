@@ -241,6 +241,14 @@ describe('PayoutsService', () => {
       findTransactions: jest.fn().mockResolvedValue([]),
       countPrizeTransactions: jest.fn().mockResolvedValue(0),
       markSettled: jest.fn().mockResolvedValue(1),
+      findHistory: jest.fn().mockResolvedValue([]),
+      countHistory: jest.fn().mockResolvedValue(0),
+      historyStats: jest.fn().mockResolvedValue({
+        players: 0,
+        transactions: 0,
+        totalPaid: '0.00',
+        refunded: '0.00',
+      }),
       trackerStats: jest.fn().mockResolvedValue({
         activePayouts: 0,
         inProcessing: 0,
