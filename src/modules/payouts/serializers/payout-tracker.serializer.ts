@@ -167,7 +167,15 @@ export function toPayoutTrackerItem(
   // The furthest completed step, or step 1 when nothing is done yet.
   const currentIndex = Math.max(0, doneCount - 1);
 
-  const blocked = payout.blockerReason !== null;
+  // A terminal payout cannot be blocked. `blockerReason` is not cleared on
+  // cancellation, so without this a cancelled payout renders a red alert on a
+  // step it will never reach again — the operator sees something to act on
+  // where there is nothing.
+  const terminal =
+    payout.status === PayoutStatus.CANCELLED ||
+    payout.status === PayoutStatus.PAID;
+
+  const blocked = !terminal && payout.blockerReason !== null;
   const failed = payout.status === PayoutStatus.FAILED;
 
   const steps: TrackerStep[] = TRACKER_STEPS.map((step, index) => {

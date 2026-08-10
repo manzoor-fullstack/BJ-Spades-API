@@ -197,6 +197,32 @@ describe('toPayoutTrackerItem', () => {
     ).toBeNull();
   });
 
+  it('does not mark a cancelled payout blocked by a stale reason', () => {
+    // blockerReason is not cleared on cancellation. Rendering it as BLOCKED
+    // would show a red alert on a step the payout will never reach again.
+    const item = toPayoutTrackerItem(
+      payoutFixture({
+        status: PayoutStatus.CANCELLED,
+        blockerReason: 'KYC incomplete',
+      }),
+    );
+
+    expect(item.steps.some((step) => step.state === 'BLOCKED')).toBe(false);
+  });
+
+  it('does not mark a paid payout blocked by a stale reason', () => {
+    const item = toPayoutTrackerItem(
+      payoutFixture({
+        status: PayoutStatus.PAID,
+        processedAt: new Date('2026-05-21T00:00:00.000Z'),
+        paidAt: new Date('2026-05-22T00:00:00.000Z'),
+        blockerReason: 'KYC incomplete',
+      }),
+    );
+
+    expect(item.steps.some((step) => step.state === 'BLOCKED')).toBe(false);
+  });
+
   it('marks Processing blocked and surfaces the reason on a failure', () => {
     const item = toPayoutTrackerItem(
       payoutFixture({
