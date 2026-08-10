@@ -124,9 +124,18 @@ export function toPayoutListItem(payout: PayoutWithRelations): PayoutListItem {
   };
 }
 
-/** Mirrors the four eligibility guards in PayoutsService.process exactly. */
+/**
+ * Mirrors the eligibility guards in `PayoutsService.process` exactly.
+ *
+ * The method check is not optional here. `PayoutMethod` gained eight members
+ * for the Methods tab, and only STRIPE_CONNECT can actually be executed — so
+ * without it the payouts table's Process button and the Tracker's Send
+ * Transfer would both offer to send a Zelle or USDC payout that the API then
+ * refuses with 422.
+ */
 export function isPayable(payout: PayoutWithRelations): boolean {
   return (
+    payout.method === 'STRIPE_CONNECT' &&
     payout.status === 'APPROVED' &&
     payout.user.stripeAccountStatus === 'VERIFIED' &&
     payout.stripeTransferId === null &&

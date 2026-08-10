@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   ActivityCategory,
+  PayoutMethod,
   PayoutStatus,
   StripeAccountStatus,
   TransactionType,
@@ -86,6 +87,9 @@ export const PROCESS_ERRORS = {
   NOT_VERIFIED: 'User has not completed Stripe onboarding',
   ALREADY_PROCESSED: 'Payout has already been processed',
   NOT_POSITIVE: 'Payout amount must be positive',
+  UNSUPPORTED_METHOD:
+    'Only Stripe Connect payouts can be sent from here. Settle this method ' +
+    'outside the system and mark the payout as manual.',
 } as const;
 
 /** Stripe's own idempotency key for a transfer. Never change this format. */
@@ -760,6 +764,18 @@ export class PayoutsService {
     // the status guard, and "already processed" is the answer that matters.
     if (payout.stripeTransferId || payout.status === PayoutStatus.PAID) {
       throw new UnprocessableEntityException(PROCESS_ERRORS.ALREADY_PROCESSED);
+    }
+
+    // `PayoutMethod` gained eight members when the Methods tab landed, but
+    // `process()` only knows how to execute a Stripe transfer. Without this
+    // guard a ZELLE or USDC payout would be handed to Stripe, which would
+    // either fail confusingly or — worse — succeed against the wrong rail.
+    //
+    // Recording that a player connected a rail is not the same as being able
+    // to settle over it. Every other method must be paid outside the system
+    // and marked MANUAL.
+    if (payout.method !== PayoutMethod.STRIPE_CONNECT) {
+      throw new UnprocessableEntityException(PROCESS_ERRORS.UNSUPPORTED_METHOD);
     }
 
     if (payout.status !== PayoutStatus.APPROVED) {

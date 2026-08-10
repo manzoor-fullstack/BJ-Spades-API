@@ -6,6 +6,7 @@ import {
 import type { ConfigService } from '@nestjs/config';
 
 import type { SettingsService } from '../../settings/settings.service';
+import { toPayoutListItem } from '../serializers/payout.serializer';
 import {
   PayoutMethod,
   PayoutStatus,
@@ -300,6 +301,51 @@ describe('PayoutsService', () => {
       stripe,
       settings as unknown as SettingsService,
     );
+  });
+
+  describe('unsupported payout methods', () => {
+    it('refuses to process a non-Stripe payout', async () => {
+      repository.findById.mockResolvedValue(
+        payoutFixture({ method: PayoutMethod.ZELLE }),
+      );
+
+      await expect(service.process(PAYOUT_ID, ADMIN)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+    });
+
+    it('never hands a non-Stripe payout to Stripe', async () => {
+      // The Methods tab records that a player connected Zelle or USDC. That is
+      // not the same as being able to settle over it, and handing one of these
+      // to Stripe would either fail confusingly or pay the wrong rail.
+      for (const method of [
+        PayoutMethod.ZELLE,
+        PayoutMethod.USDC,
+        PayoutMethod.MANUAL,
+      ]) {
+        stripe.createTransfer.mockClear();
+        repository.claimForProcessing.mockClear();
+        repository.findById.mockResolvedValue(payoutFixture({ method }));
+
+        await expect(service.process(PAYOUT_ID, ADMIN)).rejects.toThrow();
+
+        expect(stripe.createTransfer).not.toHaveBeenCalled();
+        expect(repository.claimForProcessing).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not mark a non-Stripe payout payable', () => {
+      expect(
+        toPayoutListItem(payoutFixture({ method: PayoutMethod.ZELLE }))
+          .isPayable,
+      ).toBe(false);
+
+      // The button and the 422 must agree, so the Stripe one stays payable.
+      expect(
+        toPayoutListItem(payoutFixture({ method: PayoutMethod.STRIPE_CONNECT }))
+          .isPayable,
+      ).toBe(true);
+    });
   });
 
   describe('the payout freeze', () => {
