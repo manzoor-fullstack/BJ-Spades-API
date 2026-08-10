@@ -194,6 +194,8 @@ model Admin {
   updatedSettings     Settings[]
   securityAlerts      SecurityAlert[]
   resolvedAlerts      SecurityAlert[] @relation("SecurityAlertResolvedBy")
+  reviewedClaims      PrizeClaim[]
+  resolvedDisputes    Dispute[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -317,6 +319,8 @@ model User {
   payouts        Payout[]
   transactions   Transaction[]
   securityAlerts SecurityAlert[]
+  prizeClaims    PrizeClaim[]
+  disputes       Dispute[]
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -466,6 +470,8 @@ model Tournament {
   registrations TournamentRegistration[]
   payouts       Payout[]
   transactions  Transaction[]
+  prizeClaims   PrizeClaim[]
+  disputes      Dispute[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -731,4 +737,145 @@ model SecurityAlert {
   @@index([status, createdAt])
   @@index([severity, createdAt])
   @@index([sourceIp])
+}
+
+/// Where a player's claim sits in the review queue.
+enum ClaimStatus {
+  PENDING_REVIEW
+  APPROVED
+  DECLINED
+}
+
+/// A player's claim on a prize they placed for.
+///
+/// Separate from `Payout`: a claim is the player asserting a right to
+/// something, which an admin then accepts or refuses. The payout is what
+/// happens after an approval, and plenty of claims never become one.
+model PrizeClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  placement Int?
+
+  /// What was claimed, in words: "$1,000 + Hoodie". Free text because a prize
+  /// is not always money and the merchandise link does not exist yet.
+  prizeDescription String
+
+  /// The money part, where there is one. Null for a purely physical prize.
+  prizeAmount Decimal? @db.Decimal(18, 2)
+
+  /// The player accepted the prize terms. False is a real blocker, not a
+  /// formality — an unaccepted claim must not be approved.
+  termsAccepted Boolean @default(false)
+
+  /// A shipping address exists for the physical part of the prize.
+  shippingProvided Boolean @default(false)
+
+  status      ClaimStatus @default(PENDING_REVIEW)
+  submittedAt DateTime    @default(now())
+
+  reviewedAt        DateTime?
+  reviewedByAdminId String?
+  reviewedByAdmin   Admin?    @relation(fields: [reviewedByAdminId], references: [id])
+
+  /// Required when declining, so a refusal always carries a reason.
+  decisionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, submittedAt])
+  @@index([userId])
+}
+
+enum DisputeRisk {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DisputeStatus {
+  UNDER_REVIEW
+  CLEARED
+  DISQUALIFIED
+  APPEAL_FILED
+}
+
+/// An anti-cheat case or a player-filed appeal.
+model Dispute {
+  id String @id @default(uuid())
+
+  /// Human-facing case reference, e.g. DSP-4471. Unique so it can be searched
+  /// and quoted to a player.
+  caseNumber String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  /// The match this concerns, where it is about one. Free text: matches are
+  /// not modelled in this milestone.
+  matchReference String?
+
+  reason String
+  risk   DisputeRisk   @default(LOW)
+  status DisputeStatus @default(UNDER_REVIEW)
+
+  filedAt DateTime @default(now())
+
+  resolvedAt        DateTime?
+  resolvedByAdminId String?
+  resolvedByAdmin   Admin?    @relation(fields: [resolvedByAdminId], references: [id])
+
+  /// Why it was cleared or disqualified. Required on resolution — a
+  /// disqualification with no stated reason cannot be defended later.
+  resolutionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, filedAt])
+  @@index([risk, status])
+  @@index([userId])
+}
+
+enum SponsorStatus {
+  ACTIVE
+  PENDING
+  INACTIVE
+}
+
+/// A sponsor and the prize they fund.
+model Sponsor {
+  id String @id @default(uuid())
+
+  name String
+
+  /// What the sponsor provides: "$2,000 bonus + branded swag".
+  prizeDescription String
+
+  /// Cash value of the sponsorship.
+  value Decimal @db.Decimal(18, 2)
+
+  /// How the arrangement works — "10% affiliate", "Promo codes",
+  /// "Sponsored payout". Free text: these are commercial terms, not a fixed
+  /// set the software should pretend to enumerate.
+  splitType String
+
+  contactEmail String
+
+  status SponsorStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, name])
 }
