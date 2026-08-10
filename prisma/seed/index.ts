@@ -11,6 +11,7 @@ import { seedAdmin } from './admin.seed';
 import { seedUsers } from './users.seed';
 import { seedTournaments } from './tournaments.seed';
 import { seedRewards } from './rewards.seed';
+import { seedClaimsAndDisputes } from './claims-disputes.seed';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -34,6 +35,9 @@ async function main() {
   await seedTournaments(prisma);
   // Must run after seedAdmin: every reward and product records its creator.
   await seedRewards(prisma);
+  // Must run after seedUsers and seedTournaments: claims and cases reference
+  // both.
+  await seedClaimsAndDisputes(prisma);
 
   console.log('🎉 Database Seed Completed');
 }
