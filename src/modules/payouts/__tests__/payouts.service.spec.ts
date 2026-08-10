@@ -4,6 +4,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+
+import type { SettingsService } from '../../settings/settings.service';
 import {
   PayoutMethod,
   PayoutStatus,
@@ -220,6 +222,7 @@ describe('PayoutsService', () => {
   let repository: MockedRepository;
   let activity: { record: jest.Mock };
   let stripe: MockedStripe;
+  let settings: { isPayoutsFrozen: jest.Mock };
   let service: PayoutsService;
 
   beforeEach(() => {
@@ -286,6 +289,8 @@ describe('PayoutsService', () => {
       transaction: ledgerRow(),
     });
 
+    settings = { isPayoutsFrozen: jest.fn().mockResolvedValue(false) };
+
     service = new PayoutsService(
       repository as unknown as PayoutsRepository,
       activity as unknown as ActivityLogService,
@@ -293,7 +298,36 @@ describe('PayoutsService', () => {
         get: jest.fn().mockReturnValue('http://localhost:5000'),
       } as unknown as ConfigService,
       stripe,
+      settings as unknown as SettingsService,
     );
+  });
+
+  describe('the payout freeze', () => {
+    it('refuses to process while payouts are frozen', async () => {
+      settings.isPayoutsFrozen.mockResolvedValue(true);
+
+      await expect(service.process(PAYOUT_ID, ADMIN)).rejects.toBeInstanceOf(
+        UnprocessableEntityException,
+      );
+    });
+
+    it('never reaches Stripe or claims the payout while frozen', async () => {
+      settings.isPayoutsFrozen.mockResolvedValue(true);
+
+      await expect(service.process(PAYOUT_ID, ADMIN)).rejects.toThrow();
+
+      // The whole point of a kill-switch: no transfer, and no row parked in
+      // PROCESSING with nothing behind it.
+      expect(stripe.createTransfer).not.toHaveBeenCalled();
+      expect(repository.claimForProcessing).not.toHaveBeenCalled();
+    });
+
+    it('processes normally once the freeze is cleared', async () => {
+      settings.isPayoutsFrozen.mockResolvedValue(false);
+
+      await expect(service.process(PAYOUT_ID, ADMIN)).resolves.toBeDefined();
+      expect(stripe.createTransfer).toHaveBeenCalled();
+    });
   });
 
   describe('stats', () => {

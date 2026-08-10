@@ -149,6 +149,20 @@ export class SettingsService implements OnModuleInit {
   }
 
   /**
+   * Whether the payout kill-switch is engaged.
+   *
+   * Read on every `process()` call rather than cached in a module holder: an
+   * emergency stop that takes effect on the next restart is not an emergency
+   * stop. The snapshot behind it is already cached, so this is not a query per
+   * payout.
+   */
+  async isPayoutsFrozen(): Promise<boolean> {
+    const snapshot = await this.getAll();
+
+    return snapshot['payouts.frozen'] === true;
+  }
+
+  /**
    * Writes the supplied keys and nothing else.
    *
    * Every key is validated before anything is written, so a payload with one

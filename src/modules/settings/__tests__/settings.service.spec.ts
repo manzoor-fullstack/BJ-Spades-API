@@ -238,6 +238,7 @@ describe('SettingsService', () => {
       ]);
       expect(grouped.security).toEqual({
         'security.sessionTimeoutMinutes': 10080,
+        'payouts.frozen': false,
         'activity.retentionDays': 180,
       });
     });

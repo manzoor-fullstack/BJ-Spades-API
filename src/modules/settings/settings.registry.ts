@@ -122,6 +122,14 @@ export const SETTINGS_REGISTRY = {
     min: 15,
     max: 43200,
   },
+  'payouts.frozen': {
+    group: 'security',
+    type: 'boolean',
+    default: false,
+    description:
+      'Emergency stop. While true, POST /payouts/:id/process refuses with 422 and no transfer reaches Stripe. Enforced, not advisory.',
+    isProtected: true,
+  },
   'activity.retentionDays': {
     group: 'security',
     type: 'int',

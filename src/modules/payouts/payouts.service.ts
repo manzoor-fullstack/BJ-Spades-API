@@ -27,6 +27,7 @@ import {
 import type { Paginated } from '../../common/interceptors/transform.interceptor';
 import { formatMoney } from '../../common/money/money.util';
 import { ActivityLogService } from '../activity/activity.service';
+import { SettingsService } from '../settings/settings.service';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
 import { STRIPE_GATEWAY } from '../stripe/stripe.interface';
 import type {
@@ -154,6 +155,7 @@ export class PayoutsService {
     private readonly activity: ActivityLogService,
     private readonly config: ConfigService,
     @Inject(STRIPE_GATEWAY) private readonly stripe: StripeGateway,
+    private readonly settings: SettingsService,
   ) {}
 
   async findAll(query: QueryPayoutsDto): Promise<Paginated<PayoutListItem[]>> {
@@ -401,6 +403,16 @@ export class PayoutsService {
     admin: AuthenticatedAdmin,
   ): Promise<PayoutListItem> {
     const payout = await this.getOrThrow(id);
+
+    // The kill-switch, checked before anything else and before the claim: a
+    // freeze that still let an in-flight request through would not be a
+    // freeze. Read live rather than cached at boot — an emergency stop that
+    // takes effect on the next restart is not an emergency stop.
+    if (await this.settings.isPayoutsFrozen()) {
+      throw new UnprocessableEntityException(
+        'Payouts are frozen. Clear the emergency stop in Payouts → Admin before sending transfers.',
+      );
+    }
 
     this.assertProcessable(payout);
 
