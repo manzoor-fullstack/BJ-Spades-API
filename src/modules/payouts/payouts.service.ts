@@ -532,11 +532,27 @@ export class PayoutsService {
         return true;
       }
 
-      // Confirmations of something already recorded when `process` returned.
+      // Confirmation of something already recorded when `process` returned.
       // Acknowledged so Stripe stops retrying; nothing to change.
       case 'transfer.created':
-      case 'transfer.paid':
         return false;
+
+      // The settlement signal. `process` records `paidAt` when Stripe ACCEPTS
+      // the transfer; this is when the money actually landed, and it is what
+      // completes the tracker rail's final step.
+      //
+      // `markSettled` is guarded on `settledAt: null`, so a redelivery updates
+      // zero rows instead of moving the date.
+      case 'transfer.paid': {
+        const transferId =
+          typeof object.id === 'string' ? object.id : undefined;
+
+        if (!transferId) {
+          return false;
+        }
+
+        return (await this.repository.markSettled(transferId)) > 0;
+      }
 
       default:
         this.logger.debug(`Ignoring unhandled Stripe event ${event.type}`);

@@ -457,6 +457,14 @@ export class PayoutsRepository {
   }
 
   /** Webhook path: the account id is all Stripe gives us to match on. */
+  /**
+   * Records Stripe's verdict on a connected account.
+   *
+   * The first transition into VERIFIED also stamps `stripeVerifiedAt`. It is a
+   * second, guarded write rather than part of the first: folding
+   * `stripeVerifiedAt: null` into the main WHERE would stop the *status* from
+   * updating on every later webhook for an already-verified account.
+   */
   async setStripeStatusByAccountId(
     accountId: string,
     status: StripeAccountStatus,
@@ -464,6 +472,31 @@ export class PayoutsRepository {
     const result = await this.prisma.user.updateMany({
       where: { stripeConnectAccountId: accountId },
       data: { stripeAccountStatus: status },
+    });
+
+    if (status === StripeAccountStatus.VERIFIED) {
+      // Stamped once. A re-verification after a restriction must not move the
+      // original date, and Stripe redelivers webhooks freely.
+      await this.prisma.user.updateMany({
+        where: { stripeConnectAccountId: accountId, stripeVerifiedAt: null },
+        data: { stripeVerifiedAt: new Date() },
+      });
+    }
+
+    return result.count;
+  }
+
+  /**
+   * Stamps settlement, once.
+   *
+   * The `settledAt: null` guard makes a redelivered `transfer.paid` update
+   * zero rows rather than moving the date — Stripe retries, and an idempotent
+   * write is the difference between a stable timestamp and a drifting one.
+   */
+  async markSettled(stripeTransferId: string): Promise<number> {
+    const result = await this.prisma.payout.updateMany({
+      where: { stripeTransferId, settledAt: null },
+      data: { settledAt: new Date() },
     });
 
     return result.count;

@@ -77,6 +77,7 @@ const BASE_USER: User = {
   // Added by the Phase 6 schema; a Prisma `User` now includes these.
   stripeConnectAccountId: null,
   stripeAccountStatus: StripeAccountStatus.NOT_CONNECTED,
+  stripeVerifiedAt: null,
   deletedAt: null,
   createdAt: new Date('2026-06-01T10:00:00.000Z'),
   updatedAt: new Date('2026-06-01T10:00:00.000Z'),

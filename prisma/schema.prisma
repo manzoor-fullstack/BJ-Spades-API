@@ -294,6 +294,12 @@ model User {
   stripeConnectAccountId String?             @unique
   stripeAccountStatus    StripeAccountStatus @default(NOT_CONNECTED)
 
+  /// When Stripe FIRST reported this account as VERIFIED, set by the
+  /// account.updated webhook. Stamped once: re-verification after a
+  /// restriction must not move it, because "verified since" is the question
+  /// this answers. Null for anyone never verified.
+  stripeVerifiedAt DateTime?
+
   /// Last time this record was touched by an admin or webhook action. NOT a
   /// presence signal — there is no player app reporting online status.
   /// See docs/05-DEFERRED-SCOPE.md D-02.
@@ -610,6 +616,14 @@ model Payout {
   approvedAt  DateTime?
   processedAt DateTime?
   paidAt      DateTime?
+
+  /// When Stripe confirmed the transfer SETTLED (transfer.paid).
+  ///
+  /// `paidAt` is when the transfer was created and Stripe accepted it; this is
+  /// when the money actually landed. Deliberately never backfilled from
+  /// `paidAt` — doing so would assert a settlement nobody observed. Null until
+  /// Stripe says so.
+  settledAt DateTime?
 
   approvedByAdminId String?
   approvedByAdmin   Admin?  @relation(fields: [approvedByAdminId], references: [id])

@@ -87,6 +87,7 @@ function payoutFixture(
     approvedAt: new Date('2026-08-02T00:00:00.000Z'),
     processedAt: null,
     paidAt: null,
+    settledAt: null,
     approvedByAdminId: ADMIN.id,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-02T00:00:00.000Z'),
@@ -238,6 +239,7 @@ describe('PayoutsService', () => {
       markFailed: jest.fn().mockResolvedValue(undefined),
       findTransactions: jest.fn().mockResolvedValue([]),
       countPrizeTransactions: jest.fn().mockResolvedValue(0),
+      markSettled: jest.fn().mockResolvedValue(1),
       findPrizeDistribution: jest.fn().mockResolvedValue([]),
       findPayoutTournaments: jest.fn().mockResolvedValue([]),
       tournamentExists: jest.fn().mockResolvedValue(true),
@@ -881,8 +883,43 @@ describe('PayoutsService', () => {
     });
 
     it('acknowledges an event it does not act on', async () => {
+      // `transfer.created` confirms what `process` already recorded when it
+      // returned, so there is nothing left to write.
       stripe.constructWebhookEvent.mockReturnValue({
         id: 'evt_3',
+        type: 'transfer.created',
+        data: { object: { id: 'tr_123' } },
+      });
+
+      await expect(service.handleWebhook(body, 'sig')).resolves.toMatchObject({
+        received: true,
+        handled: false,
+      });
+    });
+
+    it('stamps settlement when Stripe reports the transfer paid', async () => {
+      stripe.constructWebhookEvent.mockReturnValue({
+        id: 'evt_settled',
+        type: 'transfer.paid',
+        data: { object: { id: 'tr_123' } },
+      });
+
+      await expect(service.handleWebhook(body, 'sig')).resolves.toMatchObject({
+        received: true,
+        handled: true,
+      });
+
+      expect(repository.markSettled).toHaveBeenCalledWith('tr_123');
+    });
+
+    it('reports a redelivered settlement as unhandled', async () => {
+      // markSettled is guarded on `settledAt: null`, so a redelivery updates
+      // zero rows. Reporting `handled: true` would claim a write that did not
+      // happen.
+      repository.markSettled.mockResolvedValue(0);
+
+      stripe.constructWebhookEvent.mockReturnValue({
+        id: 'evt_settled_again',
         type: 'transfer.paid',
         data: { object: { id: 'tr_123' } },
       });
@@ -891,6 +928,21 @@ describe('PayoutsService', () => {
         received: true,
         handled: false,
       });
+    });
+
+    it('ignores a settlement event with no transfer id', async () => {
+      stripe.constructWebhookEvent.mockReturnValue({
+        id: 'evt_settled_bad',
+        type: 'transfer.paid',
+        data: { object: {} },
+      });
+
+      await expect(service.handleWebhook(body, 'sig')).resolves.toMatchObject({
+        received: true,
+        handled: false,
+      });
+
+      expect(repository.markSettled).not.toHaveBeenCalled();
     });
 
     it('acknowledges an entirely unknown event type', async () => {
