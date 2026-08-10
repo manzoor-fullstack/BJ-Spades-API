@@ -4,6 +4,7 @@ import {
   DisputeStatus,
   Prisma,
   PrismaClient,
+  SponsorStatus,
 } from '@prisma/client';
 
 /**
@@ -244,4 +245,70 @@ export async function seedClaimsAndDisputes(
   console.log(
     `\n✅ Seeded ${CLAIMS.length} claims and ${DISPUTES.length} disputes`,
   );
+}
+
+interface SponsorSeed {
+  id: string;
+  name: string;
+  prizeDescription: string;
+  value: string;
+  splitType: string;
+  contactEmail: string;
+  status: SponsorStatus;
+}
+
+/** One sponsor per split type, so the tab shows each arrangement it supports. */
+const SPONSORS: SponsorSeed[] = [
+  {
+    id: '99999999-9999-4999-8999-000000000001',
+    name: 'RedBull Esports',
+    prizeDescription: '$2,000 bonus + branded swag',
+    value: '2000.00',
+    splitType: '10% affiliate',
+    contactEmail: 'partners@redbull.com',
+    status: SponsorStatus.ACTIVE,
+  },
+  {
+    id: '99999999-9999-4999-8999-000000000002',
+    name: 'Logitech G',
+    prizeDescription: 'Pro mouse + keyboard set',
+    value: '350.00',
+    splitType: 'Promo codes',
+    contactEmail: 'esports@logitech.com',
+    status: SponsorStatus.ACTIVE,
+  },
+  {
+    id: '99999999-9999-4999-8999-000000000003',
+    name: 'DraftKings',
+    prizeDescription: '$500 free play credit',
+    value: '500.00',
+    splitType: 'Sponsored payout',
+    contactEmail: 'biz@draftkings.com',
+    status: SponsorStatus.PENDING,
+  },
+];
+
+export async function seedSponsors(prisma: PrismaClient): Promise<void> {
+  console.log('\n🌱 Seeding Sponsors...');
+
+  for (const sponsor of SPONSORS) {
+    await prisma.sponsor.upsert({
+      where: { id: sponsor.id },
+      update: {},
+      create: {
+        id: sponsor.id,
+        name: sponsor.name,
+        prizeDescription: sponsor.prizeDescription,
+        value: new Prisma.Decimal(sponsor.value),
+        splitType: sponsor.splitType,
+        contactEmail: sponsor.contactEmail,
+        status: sponsor.status,
+      },
+    });
+
+    console.log(`  ✅ ${sponsor.name} — ${sponsor.splitType} (${sponsor.status})`);
+  }
+
+  console.log(`
+✅ Seeded ${SPONSORS.length} sponsors`);
 }

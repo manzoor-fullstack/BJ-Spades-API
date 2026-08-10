@@ -103,6 +103,9 @@ describe('activity action catalogue', () => {
     'claim.declined': 'Prize claim declined',
     'dispute.cleared': 'Dispute cleared',
     'dispute.disqualified': 'Player disqualified',
+    'sponsor.created': 'Sponsor added',
+    'sponsor.updated': 'Sponsor updated',
+    'sponsor.deleted': 'Sponsor removed',
     'payout.failed': 'Payout failed',
     'payout.stripe_onboarding_started': 'Stripe onboarding link generated',
     'payout.stripe_account_updated': 'Stripe account status updated',
@@ -148,6 +151,7 @@ describe('activity action catalogue', () => {
     'claim.declined',
     'dispute.cleared',
     'dispute.disqualified',
+    'sponsor.deleted',
     'payout.failed',
     'payout.stripe_onboarding_started',
     'payout.stripe_account_updated',
@@ -183,6 +187,9 @@ describe('activity action catalogue', () => {
     'claim.declined': ActivityCategory.PAYOUT,
     'dispute.cleared': ActivityCategory.PAYOUT,
     'dispute.disqualified': ActivityCategory.PAYOUT,
+    'sponsor.created': ActivityCategory.PAYOUT,
+    'sponsor.updated': ActivityCategory.PAYOUT,
+    'sponsor.deleted': ActivityCategory.PAYOUT,
   };
 
   it('every catalogued code produces the expected title', () => {

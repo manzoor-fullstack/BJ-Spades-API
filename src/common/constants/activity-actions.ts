@@ -317,6 +317,28 @@ export const ACTIVITY_ACTIONS = {
     title: 'Player disqualified',
     isHighPriority: true,
   },
+
+  // Sponsors fund prizes, so the roster is money-adjacent, but creating or
+  // editing one moves nothing on its own. Deletion is the exception: it
+  // removes the record of who funded a prize.
+  SPONSOR_CREATED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'sponsor.created',
+    title: 'Sponsor added',
+    isHighPriority: false,
+  },
+  SPONSOR_UPDATED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'sponsor.updated',
+    title: 'Sponsor updated',
+    isHighPriority: false,
+  },
+  SPONSOR_DELETED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'sponsor.deleted',
+    title: 'Sponsor removed',
+    isHighPriority: true,
+  },
   PAYOUT_FAILED: {
     category: ActivityCategory.PAYOUT,
     code: 'payout.failed',
