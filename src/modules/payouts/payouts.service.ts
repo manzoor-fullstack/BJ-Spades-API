@@ -44,6 +44,11 @@ import type {
   PayoutFilter,
   PayoutWithRelations,
 } from './repositories/payouts.repository';
+import { toPayoutTrackerItem } from './serializers/payout-tracker.serializer';
+import type {
+  PayoutTrackerItem,
+  PayoutTrackerStats,
+} from './serializers/payout-tracker.serializer';
 import { toPayoutListItem } from './serializers/payout.serializer';
 import { toPrizeDistributionRow } from './serializers/prize-distribution.serializer';
 import type {
@@ -154,6 +159,34 @@ export class PayoutsService {
       owedToPlayers: formatMoney(row.owedToPlayers ?? 0),
       playersAwaiting: row.playersAwaiting,
     };
+  }
+
+  /**
+   * The Tracker tab's list.
+   *
+   * Takes the same query as `findAll` on purpose: the tracker is a different
+   * *rendering* of the same rows, so it inherits search, the status filter and
+   * the page's shared date range without a second filter implementation that
+   * could disagree with the Owed table.
+   */
+  async tracker(
+    query: QueryPayoutsDto,
+  ): Promise<Paginated<PayoutTrackerItem[]>> {
+    const args = this.buildListArgs(query);
+
+    const [payouts, total] = await Promise.all([
+      this.repository.findMany(args),
+      this.repository.count(args.filter),
+    ]);
+
+    return {
+      data: payouts.map(toPayoutTrackerItem),
+      meta: buildPaginationMeta(total, query.page, query.limit),
+    };
+  }
+
+  async trackerStats(): Promise<PayoutTrackerStats> {
+    return this.repository.trackerStats();
   }
 
   async payoutTournaments(): Promise<PayoutTournamentOption[]> {

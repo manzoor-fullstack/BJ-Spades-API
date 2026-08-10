@@ -63,6 +63,19 @@ interface ErrorBody {
   error: { code: string; message: string; requestId: string };
 }
 
+interface TrackerBody {
+  status: string;
+  advanceAction: string | null;
+  steps: { key: string; state: string }[];
+}
+
+interface TrackerStatsBody {
+  activePayouts: number;
+  inProcessing: number;
+  completed: number;
+  awaitingAction: number;
+}
+
 interface PrizeDistributionBody {
   placement: number;
   prizeWon: string;
@@ -678,6 +691,106 @@ describe('Payouts API (integration)', () => {
         owedToPlayers: '0.00',
         playersAwaiting: 0,
       });
+    });
+  });
+
+  describe('GET /api/payouts/tracker', () => {
+    it('returns a six-step rail for each payout', async () => {
+      const user = await seedUser();
+      await seedPayout(user.id, { status: PayoutStatus.APPROVED });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/tracker')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rows = (response.body as { data: TrackerBody[] }).data;
+
+      expect(rows.length).toBeGreaterThan(0);
+
+      const first = rows[0] as TrackerBody;
+      expect(first.steps).toHaveLength(6);
+      expect(first.steps.map((step) => step.key)).toEqual([
+        'PENDING_REVIEW',
+        'IDENTITY_VERIFIED',
+        'APPROVED',
+        'PROCESSING',
+        'SENT',
+        'COMPLETED',
+      ]);
+    });
+
+    it('narrows by status like the payouts list does', async () => {
+      const user = await seedUser();
+      await seedPayout(user.id, { status: PayoutStatus.CANCELLED });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/tracker?status=CANCELLED')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rows = (response.body as { data: TrackerBody[] }).data;
+
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.status).toBe('CANCELLED');
+      }
+    });
+
+    it('offers no advance action on a cancelled payout', async () => {
+      const user = await seedUser();
+      await seedPayout(user.id, { status: PayoutStatus.CANCELLED });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/tracker?status=CANCELLED')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rows = (response.body as { data: TrackerBody[] }).data;
+
+      for (const row of rows) {
+        expect(row.advanceAction).toBeNull();
+      }
+    });
+
+    it('counts a blocked payout under awaitingAction', async () => {
+      const user = await seedUser();
+      await seedPayout(user.id, {
+        status: PayoutStatus.PENDING,
+        blockerReason: 'KYC incomplete',
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/tracker/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const stats = (response.body as { data: TrackerStatsBody }).data;
+
+      expect(stats.awaitingAction).toBeGreaterThan(0);
+      expect(stats.activePayouts).toBeGreaterThan(0);
+    });
+
+    it('lets an admin with only payouts.view read the tracker', async () => {
+      const token = await supportToken();
+
+      await request(server())
+        .get('/api/payouts/tracker')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      await request(server())
+        .get('/api/payouts/tracker/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
     });
   });
 

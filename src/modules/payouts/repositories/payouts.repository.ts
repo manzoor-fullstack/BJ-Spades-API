@@ -11,6 +11,7 @@ import type { Transaction, User } from '@prisma/client';
 
 import type { Money } from '../../../common/money/money.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { PayoutTrackerStats } from '../serializers/payout-tracker.serializer';
 import type { PayoutTournamentOption } from '../serializers/prize-distribution.serializer';
 import { recordLedgerEntry } from '../../transactions/repositories/transactions.repository';
 import type { LedgerEntryInput } from '../../transactions/repositories/transactions.repository';
@@ -267,6 +268,39 @@ export class PayoutsRepository {
       pendingReview,
       playersAwaiting: awaiting.length,
     };
+  }
+
+  /**
+   * The four Tracker cards.
+   *
+   * `awaitingAction` is the one an operator acts on: held for review, or held
+   * by a blocker reason. It overlaps `activePayouts` by design — they answer
+   * different questions ("how much is in flight" vs "how much needs me").
+   */
+  async trackerStats(): Promise<PayoutTrackerStats> {
+    const outstanding: Prisma.PayoutWhereInput = {
+      status: { notIn: [PayoutStatus.PAID, PayoutStatus.CANCELLED] },
+    };
+
+    const [activePayouts, inProcessing, completed, awaitingAction] =
+      await Promise.all([
+        this.prisma.payout.count({ where: outstanding }),
+        this.prisma.payout.count({
+          where: { status: PayoutStatus.PROCESSING },
+        }),
+        this.prisma.payout.count({ where: { status: PayoutStatus.PAID } }),
+        this.prisma.payout.count({
+          where: {
+            ...outstanding,
+            OR: [
+              { status: PayoutStatus.PENDING_REVIEW },
+              { blockerReason: { not: null } },
+            ],
+          },
+        }),
+      ]);
+
+    return { activePayouts, inProcessing, completed, awaitingAction };
   }
 
   /**

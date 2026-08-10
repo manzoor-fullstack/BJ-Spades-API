@@ -102,6 +102,29 @@ export class PayoutsController {
   }
 
   @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('tracker')
+  @ApiOperation({
+    summary:
+      'Payouts as six-step progress rails. Takes the same query as GET ' +
+      '/payouts — the tracker is a different rendering of the same rows, so ' +
+      'search, the status filter and the date range behave identically.',
+  })
+  tracker(@Query() query: QueryPayoutsDto) {
+    return this.payoutsService.tracker(query);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('tracker/stats')
+  @ApiOperation({
+    summary:
+      'The four Tracker cards. `awaitingAction` overlaps `activePayouts` by ' +
+      'design: one is what is in flight, the other is what needs an operator.',
+  })
+  trackerStats() {
+    return this.payoutsService.trackerStats();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
   @Get('tournaments')
   @ApiOperation({
     summary:
