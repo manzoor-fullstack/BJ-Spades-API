@@ -35,6 +35,7 @@ import type { RawBodyRequest } from '../webhooks/webhook-raw-body';
 
 import { CancelPayoutDto } from './dto/payout-action.dto';
 import { QueryPayoutsDto } from './dto/query-payouts.dto';
+import { QueryPrizeDistributionDto } from './dto/query-prize-distribution.dto';
 import { PayoutsService } from './payouts.service';
 
 /** The audited subject: the amount and recipient, not a bare UUID. */
@@ -98,6 +99,28 @@ export class PayoutsController {
   })
   stats() {
     return this.payoutsService.stats();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('tournaments')
+  @ApiOperation({
+    summary:
+      'Tournaments that have recorded results, for the Overview tab selector. ' +
+      'Gated on payouts.view so the payouts page needs one permission, not two.',
+  })
+  payoutTournaments() {
+    return this.payoutsService.payoutTournaments();
+  }
+
+  @RequirePermissions(PERMISSION_CODES.PAYOUTS_VIEW)
+  @Get('prize-distribution')
+  @ApiOperation({
+    summary:
+      'Winners, placement, prize and payout status for one tournament. ' +
+      '`currency` filters; it does not convert — there is no FX rate source.',
+  })
+  prizeDistribution(@Query() query: QueryPrizeDistributionDto) {
+    return this.payoutsService.prizeDistribution(query);
   }
 
   @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)

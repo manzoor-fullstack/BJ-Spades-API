@@ -35,6 +35,7 @@ import type {
 
 import { CancelPayoutDto } from './dto/payout-action.dto';
 import { QueryPayoutsDto } from './dto/query-payouts.dto';
+import { QueryPrizeDistributionDto } from './dto/query-prize-distribution.dto';
 import { APPROVABLE_FROM, CANCELLABLE_FROM } from './payout-status';
 import { assertPayoutTransition } from './payout-status';
 import { PayoutsRepository } from './repositories/payouts.repository';
@@ -44,6 +45,11 @@ import type {
   PayoutWithRelations,
 } from './repositories/payouts.repository';
 import { toPayoutListItem } from './serializers/payout.serializer';
+import { toPrizeDistributionRow } from './serializers/prize-distribution.serializer';
+import type {
+  PayoutTournamentOption,
+  PrizeDistributionRow,
+} from './serializers/prize-distribution.serializer';
 import type {
   PayoutListItem,
   PayoutStats,
@@ -148,6 +154,32 @@ export class PayoutsService {
       owedToPlayers: formatMoney(row.owedToPlayers ?? 0),
       playersAwaiting: row.playersAwaiting,
     };
+  }
+
+  async payoutTournaments(): Promise<PayoutTournamentOption[]> {
+    return this.repository.findPayoutTournaments();
+  }
+
+  /**
+   * The Overview tab's table.
+   *
+   * An unknown tournament is a 404 rather than an empty list: an empty table
+   * for a mistyped id reads as "this tournament had no winners", which is a
+   * different and wrong statement.
+   */
+  async prizeDistribution(
+    dto: QueryPrizeDistributionDto,
+  ): Promise<PrizeDistributionRow[]> {
+    if (!(await this.repository.tournamentExists(dto.tournamentId))) {
+      throw new NotFoundException('Tournament not found.');
+    }
+
+    const rows = await this.repository.findPrizeDistribution(
+      dto.tournamentId,
+      dto.currency,
+    );
+
+    return rows.map(toPrizeDistributionRow);
   }
 
   async findOne(id: string): Promise<PayoutListItem> {

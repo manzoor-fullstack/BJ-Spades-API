@@ -47,6 +47,7 @@ const ADMIN: AuthenticatedAdmin = {
 
 const PAYOUT_ID = '33333333-3333-4333-8333-000000000001';
 const USER_ID = '11111111-1111-4111-8111-000000000001';
+const TOURNAMENT_ID = '44444444-4444-4444-8444-000000000001';
 
 const ALL_STATUSES = Object.values(PayoutStatus);
 
@@ -323,6 +324,49 @@ describe('PayoutsService', () => {
         readyToSend: '0.00',
         blocked: '0.00',
       });
+    });
+  });
+
+  describe('prizeDistribution', () => {
+    it('throws 404 for an unknown tournament', async () => {
+      repository.tournamentExists.mockResolvedValue(false);
+
+      await expect(
+        service.prizeDistribution({ tournamentId: TOURNAMENT_ID }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns an empty list for a tournament with no placements', async () => {
+      repository.tournamentExists.mockResolvedValue(true);
+      repository.findPrizeDistribution.mockResolvedValue([]);
+
+      await expect(
+        service.prizeDistribution({ tournamentId: TOURNAMENT_ID }),
+      ).resolves.toEqual([]);
+    });
+
+    it('passes the currency filter through to the repository', async () => {
+      repository.tournamentExists.mockResolvedValue(true);
+
+      await service.prizeDistribution({
+        tournamentId: TOURNAMENT_ID,
+        currency: 'usd',
+      });
+
+      expect(repository.findPrizeDistribution).toHaveBeenCalledWith(
+        TOURNAMENT_ID,
+        'usd',
+      );
+    });
+
+    it('does not query the winners of a tournament that does not exist', async () => {
+      repository.tournamentExists.mockResolvedValue(false);
+
+      await expect(
+        service.prizeDistribution({ tournamentId: TOURNAMENT_ID }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(repository.findPrizeDistribution).not.toHaveBeenCalled();
     });
   });
 

@@ -63,6 +63,12 @@ interface ErrorBody {
   error: { code: string; message: string; requestId: string };
 }
 
+interface PrizeDistributionBody {
+  placement: number;
+  prizeWon: string;
+  status: string;
+}
+
 interface StatsBody {
   success: true;
   data: {
@@ -672,6 +678,143 @@ describe('Payouts API (integration)', () => {
         owedToPlayers: '0.00',
         playersAwaiting: 0,
       });
+    });
+  });
+
+  describe('GET /api/payouts/prize-distribution', () => {
+    it('returns 404 for an unknown tournament', async () => {
+      const token = await adminToken();
+
+      await request(server())
+        .get(`/api/payouts/prize-distribution?tournamentId=${UNKNOWN_ID}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it('returns 400 without a tournamentId', async () => {
+      const token = await adminToken();
+
+      await request(server())
+        .get('/api/payouts/prize-distribution')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+
+    it('orders winners by placement and derives each status', async () => {
+      const tournament = await seedTournament(seededAdminId);
+
+      const verified = await seedUser();
+      const unverified = await seedUser({
+        stripeAccountStatus: StripeAccountStatus.PENDING,
+      });
+
+      const paid = await seedPayout(verified.id, {
+        amount: new Prisma.Decimal('5000.00'),
+        status: PayoutStatus.PAID,
+        tournamentId: tournament.id,
+      });
+      const held = await seedPayout(unverified.id, {
+        amount: new Prisma.Decimal('200.00'),
+        status: PayoutStatus.PENDING_REVIEW,
+        tournamentId: tournament.id,
+      });
+
+      await testPrisma.tournamentRegistration.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: verified.id,
+          placement: 1,
+          prizeWon: new Prisma.Decimal('5000.00'),
+          payoutId: paid.id,
+        },
+      });
+      await testPrisma.tournamentRegistration.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: unverified.id,
+          placement: 2,
+          prizeWon: new Prisma.Decimal('200.00'),
+          payoutId: held.id,
+        },
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get(`/api/payouts/prize-distribution?tournamentId=${tournament.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const rows = (response.body as { data: PrizeDistributionBody[] }).data;
+
+      expect(rows).toHaveLength(2);
+
+      const [first, second] = rows as [
+        PrizeDistributionBody,
+        PrizeDistributionBody,
+      ];
+
+      expect(first.placement).toBe(1);
+      expect(first.prizeWon).toBe('5000.00');
+      expect(first.status).toBe('SENT');
+      // Held AND the recipient is unverified: the actionable state.
+      expect(second.status).toBe('KYC_NEEDED');
+    });
+
+    it('omits registrations with no placement', async () => {
+      const tournament = await seedTournament(seededAdminId);
+      const player = await seedUser();
+
+      await testPrisma.tournamentRegistration.create({
+        data: { tournamentId: tournament.id, userId: player.id },
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get(`/api/payouts/prize-distribution?tournamentId=${tournament.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect((response.body as { data: unknown[] }).data).toHaveLength(0);
+    });
+
+    it('lets an admin with only payouts.view read both new routes', async () => {
+      const token = await supportToken();
+
+      await request(server())
+        .get('/api/payouts/tournaments')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+    });
+
+    it('lists only tournaments that have recorded results', async () => {
+      const withResults = await seedTournament(seededAdminId);
+      const withoutResults = await seedTournament(seededAdminId);
+      const player = await seedUser();
+
+      await testPrisma.tournamentRegistration.create({
+        data: {
+          tournamentId: withResults.id,
+          userId: player.id,
+          placement: 1,
+          prizeWon: new Prisma.Decimal('100.00'),
+        },
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/tournaments')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const ids = (response.body as { data: { id: string }[] }).data.map(
+        (entry) => entry.id,
+      );
+
+      expect(ids).toContain(withResults.id);
+      expect(ids).not.toContain(withoutResults.id);
     });
   });
 
