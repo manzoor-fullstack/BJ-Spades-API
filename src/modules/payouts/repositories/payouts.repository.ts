@@ -11,6 +11,7 @@ import type { Transaction, User } from '@prisma/client';
 
 import type { Money } from '../../../common/money/money.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { PayoutTournamentOption } from '../serializers/prize-distribution.serializer';
 import { recordLedgerEntry } from '../../transactions/repositories/transactions.repository';
 import type { LedgerEntryInput } from '../../transactions/repositories/transactions.repository';
 
@@ -35,6 +36,31 @@ const PAYOUT_INCLUDE = {
 
 export type PayoutWithRelations = Prisma.PayoutGetPayload<{
   include: typeof PAYOUT_INCLUDE;
+}>;
+
+/**
+ * Everything a Prize Distribution row needs, in one query.
+ *
+ * `stripeAccountStatus` is selected because the row's badge distinguishes
+ * "held for our review" from "held on the recipient" — see
+ * `deriveDistributionStatus`.
+ */
+const DISTRIBUTION_INCLUDE = {
+  user: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      stripeAccountStatus: true,
+    },
+  },
+  tournament: { select: { id: true, name: true } },
+  payout: { select: { id: true, status: true, currency: true } },
+} satisfies Prisma.TournamentRegistrationInclude;
+
+export type RegistrationWithPayout = Prisma.TournamentRegistrationGetPayload<{
+  include: typeof DISTRIBUTION_INCLUDE;
 }>;
 
 export interface PayoutFilter {
@@ -239,6 +265,51 @@ export class PayoutsRepository {
       pendingReview,
       playersAwaiting: awaiting.length,
     };
+  }
+
+  /**
+   * Winners of one tournament, best placement first.
+   *
+   * Only rows with a placement come back: a registration without one is a
+   * player who entered, not a winner, and has no place in a prize table.
+   */
+  findPrizeDistribution(
+    tournamentId: string,
+    currency?: string,
+  ): Promise<RegistrationWithPayout[]> {
+    return this.prisma.tournamentRegistration.findMany({
+      where: {
+        tournamentId,
+        placement: { not: null },
+        ...(currency ? { payout: { currency } } : {}),
+      },
+      include: DISTRIBUTION_INCLUDE,
+      orderBy: [{ placement: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /**
+   * Tournaments that have results, for the Overview selector.
+   *
+   * A tournament nobody has placed in would render an empty table, so it is
+   * not offered at all. Newest first — the operator almost always wants the
+   * tournament that just finished.
+   */
+  findPayoutTournaments(): Promise<PayoutTournamentOption[]> {
+    return this.prisma.tournament.findMany({
+      where: { registrations: { some: { placement: { not: null } } } },
+      select: { id: true, name: true, status: true },
+      orderBy: { startsAt: 'desc' },
+    });
+  }
+
+  async tournamentExists(id: string): Promise<boolean> {
+    const found = await this.prisma.tournament.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    return found !== null;
   }
 
   /**

@@ -237,6 +237,9 @@ describe('PayoutsService', () => {
       markFailed: jest.fn().mockResolvedValue(undefined),
       findTransactions: jest.fn().mockResolvedValue([]),
       countPrizeTransactions: jest.fn().mockResolvedValue(0),
+      findPrizeDistribution: jest.fn().mockResolvedValue([]),
+      findPayoutTournaments: jest.fn().mockResolvedValue([]),
+      tournamentExists: jest.fn().mockResolvedValue(true),
     };
 
     activity = { record: jest.fn().mockResolvedValue(undefined) };
