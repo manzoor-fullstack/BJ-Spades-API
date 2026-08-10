@@ -19,6 +19,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './modules/auth/guards/permissions.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MerchandiseModule } from './modules/merchandise/merchandise.module';
+import { ClaimsModule } from './modules/claims/claims.module';
+import { DisputesModule } from './modules/disputes/disputes.module';
 import { PayoutsModule } from './modules/payouts/payouts.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
@@ -103,6 +105,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 
     // Payouts: approval, the Stripe Connect transfer, and Connect onboarding.
     PayoutsModule,
+    ClaimsModule,
+    DisputesModule,
 
     // @Global: the session timeout is read by AuthService at login, and the
     // low-stock threshold and audit retention window are pushed from here into

@@ -99,6 +99,10 @@ describe('activity action catalogue', () => {
     'payout.approved': 'Payout approved',
     'payout.processed': 'Payout processed',
     'payout.cancelled': 'Payout cancelled',
+    'claim.approved': 'Prize claim approved',
+    'claim.declined': 'Prize claim declined',
+    'dispute.cleared': 'Dispute cleared',
+    'dispute.disqualified': 'Player disqualified',
     'payout.failed': 'Payout failed',
     'payout.stripe_onboarding_started': 'Stripe onboarding link generated',
     'payout.stripe_account_updated': 'Stripe account status updated',
@@ -140,6 +144,10 @@ describe('activity action catalogue', () => {
     'payout.approved',
     'payout.processed',
     'payout.cancelled',
+    'claim.approved',
+    'claim.declined',
+    'dispute.cleared',
+    'dispute.disqualified',
     'payout.failed',
     'payout.stripe_onboarding_started',
     'payout.stripe_account_updated',
@@ -168,6 +176,13 @@ describe('activity action catalogue', () => {
     // so ledger events are filed under PAYOUT — the money category, and where an
     // operator chasing a balance movement would look.
     'transaction.balance_adjusted': ActivityCategory.PAYOUT,
+    // Same reasoning: ActivityCategory has no CLAIM or DISPUTE member. Both
+    // decide whether money is owed at all, so they are filed under PAYOUT —
+    // where an operator tracing why a player was or was not paid would look.
+    'claim.approved': ActivityCategory.PAYOUT,
+    'claim.declined': ActivityCategory.PAYOUT,
+    'dispute.cleared': ActivityCategory.PAYOUT,
+    'dispute.disqualified': ActivityCategory.PAYOUT,
   };
 
   it('every catalogued code produces the expected title', () => {

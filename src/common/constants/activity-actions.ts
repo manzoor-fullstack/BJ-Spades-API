@@ -290,6 +290,33 @@ export const ACTIVITY_ACTIONS = {
     title: 'Payout cancelled',
     isHighPriority: true,
   },
+
+  // Claims and disputes decide whether money is owed at all, so they carry the
+  // same weight as the payout actions above.
+  CLAIM_APPROVED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'claim.approved',
+    title: 'Prize claim approved',
+    isHighPriority: true,
+  },
+  CLAIM_DECLINED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'claim.declined',
+    title: 'Prize claim declined',
+    isHighPriority: true,
+  },
+  DISPUTE_CLEARED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'dispute.cleared',
+    title: 'Dispute cleared',
+    isHighPriority: true,
+  },
+  DISPUTE_DISQUALIFIED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'dispute.disqualified',
+    title: 'Player disqualified',
+    isHighPriority: true,
+  },
   PAYOUT_FAILED: {
     category: ActivityCategory.PAYOUT,
     code: 'payout.failed',
