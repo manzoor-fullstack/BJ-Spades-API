@@ -70,6 +70,19 @@ export interface PayoutStats {
   paidOut: string;
   /** Approved or in flight — committed, not yet delivered. */
   pendingPayouts: string;
+  /**
+   * Sum of payouts that would succeed if sent right now. The four conditions
+   * behind it are exactly `isPayable()` below and the four guards in
+   * `PayoutsService.process`, so this card and that 422 cannot disagree.
+   */
+  readyToSend: string;
+  /**
+   * Sum of outstanding payouts held by a blocker reason or awaiting review.
+   *
+   * `readyToSend + blocked` is NOT `owedToPlayers`: a PENDING payout that is
+   * neither payable nor blocked belongs to neither figure.
+   */
+  blocked: string;
   /** Count, not money: how many payouts are held for review. */
   pendingReview: number;
   /** Everything not yet paid or cancelled. */

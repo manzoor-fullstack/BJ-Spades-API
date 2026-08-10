@@ -61,6 +61,8 @@ export interface PayoutStatsRow {
   paidOut: Money | null;
   pendingPayouts: Money | null;
   owedToPlayers: Money | null;
+  readyToSend: Money | null;
+  blocked: Money | null;
   pendingReview: number;
   playersAwaiting: number;
 }
@@ -166,42 +168,74 @@ export class PayoutsRepository {
       status: { notIn: [PayoutStatus.PAID, PayoutStatus.CANCELLED] },
     };
 
-    const [prizePool, paidOut, pendingPayouts, owed, pendingReview, awaiting] =
-      await Promise.all([
-        // Cancelled tournaments are excluded: their prize money is not on offer.
-        this.prisma.tournament.aggregate({
-          where: { status: { not: TournamentStatus.CANCELLED } },
-          _sum: { prizePool: true },
-        }),
-        this.prisma.payout.aggregate({
-          where: { status: PayoutStatus.PAID },
-          _sum: { amount: true },
-        }),
-        this.prisma.payout.aggregate({
-          where: {
-            status: { in: [PayoutStatus.APPROVED, PayoutStatus.PROCESSING] },
-          },
-          _sum: { amount: true },
-        }),
-        this.prisma.payout.aggregate({
-          where: outstanding,
-          _sum: { amount: true },
-        }),
-        this.prisma.payout.count({
-          where: { status: PayoutStatus.PENDING_REVIEW },
-        }),
-        this.prisma.payout.findMany({
-          where: outstanding,
-          select: { userId: true },
-          distinct: ['userId'],
-        }),
-      ]);
+    const [
+      prizePool,
+      paidOut,
+      pendingPayouts,
+      owed,
+      pendingReview,
+      awaiting,
+      readyToSend,
+      blocked,
+    ] = await Promise.all([
+      // Cancelled tournaments are excluded: their prize money is not on offer.
+      this.prisma.tournament.aggregate({
+        where: { status: { not: TournamentStatus.CANCELLED } },
+        _sum: { prizePool: true },
+      }),
+      this.prisma.payout.aggregate({
+        where: { status: PayoutStatus.PAID },
+        _sum: { amount: true },
+      }),
+      this.prisma.payout.aggregate({
+        where: {
+          status: { in: [PayoutStatus.APPROVED, PayoutStatus.PROCESSING] },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.payout.aggregate({
+        where: outstanding,
+        _sum: { amount: true },
+      }),
+      this.prisma.payout.count({
+        where: { status: PayoutStatus.PENDING_REVIEW },
+      }),
+      this.prisma.payout.findMany({
+        where: outstanding,
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+      // Mirrors isPayable() in the serializer and the four guards in
+      // PayoutsService.process. Kept in lockstep with them by hand — a
+      // divergence shows up as a card offering to send an unsendable payout.
+      this.prisma.payout.aggregate({
+        where: {
+          status: PayoutStatus.APPROVED,
+          stripeTransferId: null,
+          amount: { gt: 0 },
+          user: { stripeAccountStatus: StripeAccountStatus.VERIFIED },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.payout.aggregate({
+        where: {
+          ...outstanding,
+          OR: [
+            { blockerReason: { not: null } },
+            { status: PayoutStatus.PENDING_REVIEW },
+          ],
+        },
+        _sum: { amount: true },
+      }),
+    ]);
 
     return {
       totalPrizePool: prizePool._sum.prizePool,
       paidOut: paidOut._sum.amount,
       pendingPayouts: pendingPayouts._sum.amount,
       owedToPlayers: owed._sum.amount,
+      readyToSend: readyToSend._sum.amount,
+      blocked: blocked._sum.amount,
       pendingReview,
       playersAwaiting: awaiting.length,
     };

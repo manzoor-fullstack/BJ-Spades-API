@@ -69,6 +69,8 @@ interface StatsBody {
     totalPrizePool: string;
     paidOut: string;
     pendingPayouts: string;
+    readyToSend: string;
+    blocked: string;
     pendingReview: number;
     owedToPlayers: string;
     playersAwaiting: number;
@@ -597,10 +599,59 @@ describe('Payouts API (integration)', () => {
         paidOut: '7500.00',
         // Approved and in flight; there is no escrow account (D-12).
         pendingPayouts: '1000.00',
+        // Alice's approved payout: verified recipient, no transfer, positive.
+        readyToSend: '1000.00',
+        // Bob's, held for review.
+        blocked: '250.50',
         pendingReview: 1,
         owedToPlayers: '1250.50',
         playersAwaiting: 2,
       });
+    });
+
+    it('excludes an approved payout to an unverified recipient from readyToSend', async () => {
+      const unverified = await seedUser({
+        stripeAccountStatus: StripeAccountStatus.PENDING,
+      });
+
+      await seedPayout(unverified.id, {
+        amount: new Prisma.Decimal('3500.00'),
+        status: PayoutStatus.APPROVED,
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const data = (response.body as StatsBody).data;
+
+      expect(data.readyToSend).toBe('0.00');
+      expect(data.owedToPlayers).toBe('3500.00');
+    });
+
+    it('counts a blockerReason as blocked even when the status is not PENDING_REVIEW', async () => {
+      const user = await seedUser();
+
+      await seedPayout(user.id, {
+        amount: new Prisma.Decimal('1650.00'),
+        status: PayoutStatus.PENDING,
+        blockerReason: 'KYC incomplete',
+      });
+
+      const token = await adminToken();
+
+      const response = await request(server())
+        .get('/api/payouts/stats')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const data = (response.body as StatsBody).data;
+
+      expect(data.blocked).toBe('1650.00');
+      expect(data.readyToSend).toBe('0.00');
     });
 
     it('reports zeroes on an empty database rather than nulls', async () => {
@@ -615,6 +666,8 @@ describe('Payouts API (integration)', () => {
         totalPrizePool: '0.00',
         paidOut: '0.00',
         pendingPayouts: '0.00',
+        readyToSend: '0.00',
+        blocked: '0.00',
         pendingReview: 0,
         owedToPlayers: '0.00',
         playersAwaiting: 0,

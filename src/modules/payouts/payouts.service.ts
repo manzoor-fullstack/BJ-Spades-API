@@ -142,6 +142,8 @@ export class PayoutsService {
       totalPrizePool: formatMoney(row.totalPrizePool ?? 0),
       paidOut: formatMoney(row.paidOut ?? 0),
       pendingPayouts: formatMoney(row.pendingPayouts ?? 0),
+      readyToSend: formatMoney(row.readyToSend ?? 0),
+      blocked: formatMoney(row.blocked ?? 0),
       pendingReview: row.pendingReview,
       owedToPlayers: formatMoney(row.owedToPlayers ?? 0),
       playersAwaiting: row.playersAwaiting,

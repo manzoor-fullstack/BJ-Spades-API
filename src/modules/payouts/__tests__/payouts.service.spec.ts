@@ -282,6 +282,8 @@ describe('PayoutsService', () => {
         paidOut: toMoney('7500'),
         pendingPayouts: toMoney('1200.5'),
         owedToPlayers: toMoney('5150'),
+        readyToSend: toMoney('3500'),
+        blocked: toMoney('1650'),
         pendingReview: 7,
         playersAwaiting: 6,
       });
@@ -292,6 +294,8 @@ describe('PayoutsService', () => {
         pendingPayouts: '1200.50',
         pendingReview: 7,
         owedToPlayers: '5150.00',
+        readyToSend: '3500.00',
+        blocked: '1650.00',
         playersAwaiting: 6,
       });
     });
@@ -302,6 +306,8 @@ describe('PayoutsService', () => {
         paidOut: null,
         pendingPayouts: null,
         owedToPlayers: null,
+        readyToSend: null,
+        blocked: null,
         pendingReview: 0,
         playersAwaiting: 0,
       });
@@ -311,6 +317,8 @@ describe('PayoutsService', () => {
         paidOut: '0.00',
         pendingPayouts: '0.00',
         owedToPlayers: '0.00',
+        readyToSend: '0.00',
+        blocked: '0.00',
       });
     });
   });
