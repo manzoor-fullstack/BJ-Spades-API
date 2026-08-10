@@ -125,7 +125,7 @@ export function toPayoutListItem(payout: PayoutWithRelations): PayoutListItem {
 }
 
 /** Mirrors the four eligibility guards in PayoutsService.process exactly. */
-function isPayable(payout: PayoutWithRelations): boolean {
+export function isPayable(payout: PayoutWithRelations): boolean {
   return (
     payout.status === 'APPROVED' &&
     payout.user.stripeAccountStatus === 'VERIFIED' &&

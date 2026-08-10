@@ -29,6 +29,8 @@ const PAYOUT_INCLUDE = {
       email: true,
       stripeAccountStatus: true,
       stripeConnectAccountId: true,
+      // The tracker's "Identity Verified" step needs a date, not just a state.
+      stripeVerifiedAt: true,
     },
   },
   tournament: { select: { id: true, name: true } },
