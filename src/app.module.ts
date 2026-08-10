@@ -21,6 +21,7 @@ import { HealthModule } from './modules/health/health.module';
 import { MerchandiseModule } from './modules/merchandise/merchandise.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
+import { PayoutMethodsModule } from './modules/payout-methods/payout-methods.module';
 import { SponsorsModule } from './modules/sponsors/sponsors.module';
 import { PayoutsModule } from './modules/payouts/payouts.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
@@ -109,6 +110,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     ClaimsModule,
     DisputesModule,
     SponsorsModule,
+    PayoutMethodsModule,
 
     // @Global: the session timeout is read by AuthService at login, and the
     // low-stock threshold and audit retention window are pushed from here into
