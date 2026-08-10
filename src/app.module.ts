@@ -22,6 +22,10 @@ import { MerchandiseModule } from './modules/merchandise/merchandise.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { PayoutMethodsModule } from './modules/payout-methods/payout-methods.module';
+import { ShipmentsModule } from './modules/shipments/shipments.module';
+import { TaxModule } from './modules/tax/tax.module';
+import { VerificationModule } from './modules/verification/verification.module';
+import { TreasuryModule } from './modules/treasury/treasury.module';
 import { SponsorsModule } from './modules/sponsors/sponsors.module';
 import { PayoutsModule } from './modules/payouts/payouts.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
@@ -111,6 +115,10 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     DisputesModule,
     SponsorsModule,
     PayoutMethodsModule,
+    ShipmentsModule,
+    VerificationModule,
+    TaxModule,
+    TreasuryModule,
 
     // @Global: the session timeout is read by AuthService at login, and the
     // low-stock threshold and audit retention window are pushed from here into
