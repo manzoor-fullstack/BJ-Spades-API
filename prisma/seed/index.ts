@@ -13,6 +13,7 @@ import { seedTournaments } from './tournaments.seed';
 import { seedRewards } from './rewards.seed';
 import {
   seedClaimsAndDisputes,
+  seedFulfilment,
   seedSponsors,
 } from './claims-disputes.seed';
 
@@ -42,6 +43,7 @@ async function main() {
   // both.
   await seedClaimsAndDisputes(prisma);
   await seedSponsors(prisma);
+  await seedFulfilment(prisma);
 
   console.log('🎉 Database Seed Completed');
 }

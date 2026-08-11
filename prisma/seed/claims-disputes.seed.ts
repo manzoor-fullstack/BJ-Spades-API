@@ -312,3 +312,125 @@ export async function seedSponsors(prisma: PrismaClient): Promise<void> {
   console.log(`
 ✅ Seeded ${SPONSORS.length} sponsors`);
 }
+
+/**
+ * Verification, treasury, tax and shipment fixtures.
+ *
+ * Chosen to exercise the branches each tab renders: a fully verified player, a
+ * failed check, a NOT_REQUIRED check (which must NOT count against the
+ * progress denominator), a player over the tax threshold with no document, and
+ * a shipment to an incomplete address.
+ */
+export async function seedFulfilment(prisma: PrismaClient): Promise<void> {
+  console.log('\n🌱 Seeding Verification, Treasury & Shipments...');
+
+  const users = await prisma.user.findMany({
+    where: { deletedAt: null },
+    select: { id: true, addressLine1: true },
+    orderBy: { createdAt: 'asc' },
+    take: 4,
+  });
+
+  if (users.length === 0) {
+    console.log('  ⏭  No users seeded yet — skipping.');
+    return;
+  }
+
+  const states = [
+    // Fully verified, US.
+    { kyc: 'PASSED', age: 'PASSED', country: 'PASSED', tax: 'PASSED', wallet: 'PASSED', fraud: 'PASSED', iso: 'US', addr: '0x4f3a8b21' },
+    // Non-US: no W9 to file, so the tax check is NOT_REQUIRED and must not
+    // drag the progress badge down.
+    { kyc: 'PASSED', age: 'PASSED', country: 'PASSED', tax: 'NOT_REQUIRED', wallet: 'PASSED', fraud: 'PASSED', iso: 'CA', addr: '0x91bc77ee' },
+    // Action required.
+    { kyc: 'PASSED', age: 'PASSED', country: 'PASSED', tax: 'FAILED', wallet: 'FAILED', fraud: 'PASSED', iso: 'US', addr: null },
+    { kyc: 'PENDING', age: 'PENDING', country: 'PENDING', tax: 'PENDING', wallet: 'PENDING', fraud: 'PENDING', iso: 'US', addr: null },
+  ] as const;
+
+  for (const [index, user] of users.entries()) {
+    const state = states[index % states.length]!;
+
+    await prisma.playerVerification.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: {
+        userId: user.id,
+        country: state.iso,
+        walletAddress: state.addr,
+        kycCheck: state.kyc,
+        ageCheck: state.age,
+        countryCheck: state.country,
+        taxCheck: state.tax,
+        walletCheck: state.wallet,
+        fraudCheck: state.fraud,
+      },
+    });
+  }
+
+  console.log(`  ✅ ${users.length} verification records`);
+
+  await prisma.treasuryWallet.upsert({
+    where: { address: '0xBJ5p4d35A1b2C3d4' },
+    update: {},
+    create: {
+      label: 'Prize treasury',
+      address: '0xBJ5p4d35A1b2C3d4',
+      network: 'polygon',
+      currency: 'USDC',
+      balance: new Prisma.Decimal('142890.00000000'),
+      balanceRecordedAt: new Date(),
+    },
+  });
+
+  console.log('  ✅ Treasury wallet');
+
+  // A player with no address on file, so the "cannot ship to an incomplete
+  // address" guard has something to actually guard. Without this the e2e test
+  // skips and the rule goes unproven.
+  const addressless = await prisma.user.upsert({
+    where: { email: 'no-address@example.com' },
+    update: {},
+    create: {
+      firstName: 'Noah',
+      lastName: 'Address',
+      email: 'no-address@example.com',
+      status: 'ACTIVE',
+      tier: 'PLAYER',
+      source: 'ADMIN',
+      balance: new Prisma.Decimal(0),
+    },
+    select: { id: true },
+  });
+
+  const merch = await prisma.merchandise.findFirst({
+    where: { deletedAt: null },
+    include: { variants: { take: 1 } },
+  });
+
+  if (merch) {
+    // First two go to players with addresses; the third deliberately does not.
+    const recipients = [...users.slice(0, 2), addressless];
+
+    for (const [index, user] of recipients.entries()) {
+      await prisma.shipment.upsert({
+        where: { id: `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${index + 1}` },
+        update: {},
+        create: {
+          id: `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${index + 1}`,
+          userId: user.id,
+          merchandiseId: merch.id,
+          variantId: merch.variants[0]?.id ?? null,
+          customisation: index === 0 ? 'Engrave: champion name' : null,
+          status: index === 0 ? 'IN_TRANSIT' : 'PENDING',
+          carrier: index === 0 ? 'UPS' : null,
+          trackingNumber: index === 0 ? '1Z999AA10123456784' : null,
+          shippedAt: index === 0 ? new Date() : null,
+        },
+      });
+    }
+
+    console.log('  ✅ 3 shipments (one to an incomplete address)');
+  }
+
+  console.log('\n✅ Seeded fulfilment fixtures');
+}
