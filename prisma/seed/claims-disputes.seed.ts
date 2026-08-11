@@ -432,5 +432,39 @@ export async function seedFulfilment(prisma: PrismaClient): Promise<void> {
     console.log('  ✅ 3 shipments (one to an incomplete address)');
   }
 
+  // Prize earnings, so the History and Tax tabs render against real rows.
+  // Without these both show an empty state and their tests can only assert
+  // that the cards exist — which proves nothing about the data path.
+  //
+  // Amounts straddle the $600 reportable threshold deliberately: one player
+  // over it, one under, plus a refund so History has a negative row.
+  const LEDGER_SEEDS = [
+    { amount: '5000.00', type: 'PRIZE', description: 'Prize — Spring Championship' },
+    { amount: '250.00', type: 'PRIZE', description: 'Prize — Weekly Showdown' },
+    { amount: '800.00', type: 'PRIZE', description: 'Prize — Pro League' },
+    { amount: '-150.00', type: 'REFUND', description: 'Refund — cancelled tournament' },
+  ] as const;
+
+  for (const [index, entry] of LEDGER_SEEDS.entries()) {
+    const user = users[index % users.length]!;
+
+    await prisma.transaction.upsert({
+      where: { reference: `seed:ledger:${index}` },
+      update: {},
+      create: {
+        userId: user.id,
+        type: entry.type,
+        status: 'COMPLETED',
+        amount: new Prisma.Decimal(entry.amount),
+        balanceBefore: new Prisma.Decimal('0.00'),
+        balanceAfter: new Prisma.Decimal(entry.amount),
+        description: entry.description,
+        reference: `seed:ledger:${index}`,
+      },
+    });
+  }
+
+  console.log(`  ✅ ${LEDGER_SEEDS.length} prize/refund transactions`);
+
   console.log('\n✅ Seeded fulfilment fixtures');
 }
