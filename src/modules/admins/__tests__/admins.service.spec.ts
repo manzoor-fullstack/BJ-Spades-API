@@ -70,6 +70,7 @@ function makeAdmin(overrides: Partial<AdminWithRole> = {}): AdminWithRole {
     isActive: true,
     lastLogin: null,
     roleId: ADMIN_ROLE_ID,
+    avatarId: null,
     role: makeRole('ADMIN', ADMIN_ROLE_ID, ['users.manage']),
     createdAt: new Date('2026-02-01T00:00:00.000Z'),
     updatedAt: new Date('2026-02-01T00:00:00.000Z'),

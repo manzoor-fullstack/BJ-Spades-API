@@ -141,6 +141,21 @@ describe('Auth (integration)', () => {
     });
   });
 
+  describe('Admin.avatar relation', () => {
+    it('loads an admin together with its avatar asset', async () => {
+      const admin = await testPrisma.admin.findFirst({
+        where: { email: SEEDED_ADMIN.email },
+        include: { avatar: true },
+      });
+
+      expect(admin).not.toBeNull();
+      // Nothing has been uploaded, so the relation resolves to null rather
+      // than being absent — which is what proves the column exists.
+      expect(admin?.avatar).toBeNull();
+      expect(admin?.avatarId).toBeNull();
+    });
+  });
+
   describe('GET /api/auth/me', () => {
     it('returns the profile for a valid token', async () => {
       const { tokens } = await login();

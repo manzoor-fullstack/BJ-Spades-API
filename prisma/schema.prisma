@@ -189,6 +189,9 @@ model Admin {
   roleId String
   role   Role   @relation(fields: [roleId], references: [id])
 
+  avatarId String?
+  avatar   MediaAsset? @relation("AdminAvatar", fields: [avatarId], references: [id])
+
   refreshTokens RefreshToken[]
   sessions      Session[]
 
@@ -196,7 +199,7 @@ model Admin {
 
   activityLogs ActivityLog[]
 
-  uploadedMedia        MediaAsset[]
+  uploadedMedia        MediaAsset[]         @relation("UploadedMedia")
   createdTournaments   Tournament[]
   createdRewards       Reward[]
   createdMerchandise   Merchandise[]
@@ -447,7 +450,12 @@ model MediaAsset {
   height    Int?
 
   uploadedByAdminId String?
-  uploadedByAdmin   Admin?  @relation(fields: [uploadedByAdminId], references: [id])
+  uploadedByAdmin   Admin?  @relation("UploadedMedia", fields: [uploadedByAdminId], references: [id])
+
+  /// Admins using this asset as their profile picture. Separate from
+  /// `uploadedByAdmin`: the admin who uploaded a picture is not necessarily
+  /// the admin wearing it.
+  avatarOfAdmins    Admin[] @relation("AdminAvatar")
 
   tournaments Tournament[]
   rewards     Reward[]
