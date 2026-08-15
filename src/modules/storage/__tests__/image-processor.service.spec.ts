@@ -129,4 +129,43 @@ describe('ImageProcessorService', () => {
       service.process({ buffer: truncated, mimetype: 'image/png' }),
     ).rejects.toThrow(/could not be processed/);
   });
+
+  describe('process() options', () => {
+    it('crops to a square at the requested edge when fit is cover', async () => {
+      // 1000x600: larger than 512 on both edges, so `cover` has room to crop
+      // and the result is unambiguously square.
+      const buffer = await sourceImage(1000, 600, 'jpeg');
+
+      const processed = await service.process(
+        { buffer, mimetype: 'image/jpeg', originalname: 'me.jpg' },
+        { maxEdge: 512, fit: 'cover' },
+      );
+
+      expect(processed.width).toBe(512);
+      expect(processed.height).toBe(512);
+      expect(processed.mimeType).toBe('image/webp');
+
+      // Measured from the produced bytes, not from what we asked for — the
+      // same discipline the existing cases in this file already use.
+      const metadata = await sharp(processed.buffer).metadata();
+      expect(metadata.width).toBe(512);
+      expect(metadata.height).toBe(512);
+    });
+
+    it('is unchanged when called with no options', async () => {
+      // Below the 1200px default and `withoutEnlargement` is on, so the
+      // dimensions must survive untouched. This is the regression guard for
+      // tournaments, rewards and merchandise.
+      const buffer = await sourceImage(1000, 600, 'jpeg');
+
+      const processed = await service.process({
+        buffer,
+        mimetype: 'image/jpeg',
+        originalname: 'banner.jpg',
+      });
+
+      expect(processed.width).toBe(1000);
+      expect(processed.height).toBe(600);
+    });
+  });
 });

@@ -1,7 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { MediaAsset } from '@prisma/client';
 
-import { ImageProcessorService } from './image-processor.service';
+import {
+  ImageProcessorService,
+  type ProcessImageOptions,
+} from './image-processor.service';
 import type { ValidatableUpload } from './image-validation';
 import { MediaRepository } from './repositories/media.repository';
 import { STORAGE_SERVICE, type StorageService } from './storage.interface';
@@ -42,8 +45,9 @@ export class MediaService {
     file: ValidatableUpload,
     folder: string,
     uploadedByAdminId: string | null,
+    options?: ProcessImageOptions,
   ): Promise<MediaAsset> {
-    const processed = await this.imageProcessor.process(file);
+    const processed = await this.imageProcessor.process(file, options);
 
     const stored = await this.storage.upload(
       { buffer: processed.buffer, mimetype: processed.mimeType },

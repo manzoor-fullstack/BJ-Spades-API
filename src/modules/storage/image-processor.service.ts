@@ -25,6 +25,20 @@ export interface ProcessedImage {
   height: number;
 }
 
+/**
+ * Per-call overrides for the resize step.
+ *
+ * Defaults reproduce the banner behaviour exactly, so every existing caller
+ * that passes one argument is unaffected. Avatars pass
+ * `{ maxEdge: 512, fit: 'cover' }`: a profile picture is displayed in a circle
+ * a few dozen pixels across, and `inside` would keep whatever aspect ratio the
+ * original had.
+ */
+export interface ProcessImageOptions {
+  maxEdge?: number;
+  fit?: 'inside' | 'cover';
+}
+
 @Injectable()
 export class ImageProcessorService {
   private readonly logger = new Logger(ImageProcessorService.name);
@@ -38,8 +52,14 @@ export class ImageProcessorService {
    * carries GPS coordinates. The width/height/size reported back are measured
    * from the produced file, never taken from what the client claimed.
    */
-  async process(file: ValidatableUpload): Promise<ProcessedImage> {
+  async process(
+    file: ValidatableUpload,
+    options: ProcessImageOptions = {},
+  ): Promise<ProcessedImage> {
     assertValidImage(file);
+
+    const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+    const fit = options.fit ?? 'inside';
 
     try {
       const { data, info } = await sharp(file.buffer, { failOn: 'error' })
@@ -47,11 +67,9 @@ export class ImageProcessorService {
         // Skip it and portrait phone photos come out sideways.
         .rotate()
         .resize({
-          width: MAX_IMAGE_EDGE_PX,
-          height: MAX_IMAGE_EDGE_PX,
-          // `inside` bounds the long edge and keeps the aspect ratio;
-          // `withoutEnlargement` stops a 200px logo being upscaled to 1200px.
-          fit: 'inside',
+          width: maxEdge,
+          height: maxEdge,
+          fit,
           withoutEnlargement: true,
         })
         .webp({ quality: WEBP_QUALITY })
