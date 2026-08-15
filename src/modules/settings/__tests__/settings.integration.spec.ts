@@ -138,6 +138,7 @@ describe('Settings API (integration)', () => {
       expect(data.security).toEqual({
         'security.sessionTimeoutMinutes': 10080,
         'activity.retentionDays': 180,
+        'payouts.frozen': false,
       });
     });
 
