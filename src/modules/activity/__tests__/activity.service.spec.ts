@@ -62,6 +62,8 @@ describe('activity action catalogue', () => {
     'auth.login_failed': 'Failed sign-in attempt',
     'auth.logout': 'Admin signed out',
     'auth.logout_all': 'Admin signed out of all other sessions',
+    'auth.profile_updated': 'Admin updated their profile',
+    'auth.password_changed': 'Admin changed their password',
     'auth.session_revoked': 'Session revoked',
     'auth.token_reuse_detected': 'Refresh token reuse detected',
     'user.created': 'User created',
@@ -118,6 +120,9 @@ describe('activity action catalogue', () => {
 
   const HIGH_PRIORITY_CODES = [
     'auth.login_failed',
+    // Worth surfacing: if it was not the admin who changed it, this is the
+    // row that says so.
+    'auth.password_changed',
     'auth.session_revoked',
     'auth.token_reuse_detected',
     'user.suspended',
