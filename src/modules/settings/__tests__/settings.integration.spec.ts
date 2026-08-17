@@ -1,7 +1,6 @@
 import type { Server } from 'node:http';
 
 import { INestApplication } from '@nestjs/common';
-import { ItemStatus, RewardCategory } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
 
@@ -127,7 +126,6 @@ describe('Settings API (integration)', () => {
         'company.name': 'BJ Spades',
         'company.adminEmail': 'admin@bjspades.com',
         'company.timezone': 'America/New_York',
-        'inventory.lowStockThreshold': 5,
       });
       expect(data.notifications).toEqual({
         'notifications.newUsers': true,
@@ -365,52 +363,6 @@ describe('Settings API (integration)', () => {
       // refresh window it would have used before.
       expect(lifetimeMs).toBeGreaterThan(29 * 60_000);
       expect(lifetimeMs).toBeLessThan(31 * 60_000);
-    });
-
-    it('applies inventory.lowStockThreshold to the low-stock indicator', async () => {
-      const token = await adminToken();
-
-      const admin = await testPrisma.admin.findUniqueOrThrow({
-        where: { email: SEEDED_ADMIN.email },
-        select: { id: true },
-      });
-
-      const reward = await testPrisma.reward.create({
-        data: {
-          name: 'Threshold Probe',
-          company: 'BJ Spades',
-          category: RewardCategory.GENERAL,
-          value: '$10',
-          status: ItemStatus.ACTIVE,
-          stock: 10,
-          createdByAdminId: admin.id,
-        },
-      });
-
-      // 10 is comfortably above the default threshold of 5.
-      const before = await request(server())
-        .get(`/api/rewards/${reward.id}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      expect(
-        (before.body as { data: { isLowStock: boolean } }).data.isLowStock,
-      ).toBe(false);
-
-      await request(server())
-        .put('/api/settings')
-        .set('Authorization', `Bearer ${token}`)
-        .send({ 'inventory.lowStockThreshold': 20 })
-        .expect(200);
-
-      const after = await request(server())
-        .get(`/api/rewards/${reward.id}`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      expect(
-        (after.body as { data: { isLowStock: boolean } }).data.isLowStock,
-      ).toBe(true);
     });
   });
 });

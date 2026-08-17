@@ -8,7 +8,6 @@ import { ActivityCategory } from '@prisma/client';
 
 import { computeDiff } from '../../common/audit/compute-diff.util';
 import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
-import { setLowStockThreshold } from '../../common/constants/stock';
 import type { RequestContext } from '../../common/http/request-context.util';
 import {
   ActivityLogService,
@@ -45,18 +44,17 @@ interface FieldError {
  * Two things make this more than a table wrapper:
  *
  *  - **A cache.** Settings are read on every login (session timeout) and on
- *    every merchandise or reward serialisation (low-stock threshold). A query
- *    per read would put a round trip on paths that have nothing to do with
- *    settings. The cache is dropped on write, not aged out, so a save is
- *    visible on the next request rather than up to some TTL later.
+ *    other request paths that have nothing to do with settings. A query per
+ *    read would put a round trip on all of them. The cache is dropped on
+ *    write, not aged out, so a save is visible on the next request rather
+ *    than up to some TTL later.
  *
- *  - **Applying what it read.** `security.sessionTimeoutMinutes`,
- *    `activity.retentionDays` and `inventory.lowStockThreshold` are consumed by
- *    code that must not depend on this module — a pure serializer helper and
- *    the audit-log service that every module already depends on. Rather than
- *    thread a service through both, the loaded values are pushed into the two
- *    runtime holders whenever the snapshot is (re)loaded. A settings page whose
- *    toggles change nothing is worse than no settings page
+ *  - **Applying what it read.** `security.sessionTimeoutMinutes` and
+ *    `activity.retentionDays` are consumed by code that must not depend on
+ *    this module — the audit-log service that every module already depends
+ *    on. Rather than thread a service through it, the loaded value is pushed
+ *    into a runtime holder whenever the snapshot is (re)loaded. A settings
+ *    page whose toggles change nothing is worse than no settings page
  *    (docs/phases/PHASE-7.md).
  */
 @Injectable()
@@ -256,12 +254,7 @@ export class SettingsService implements OnModuleInit {
    * module. See the class comment.
    */
   private apply(snapshot: SettingsSnapshot): void {
-    const threshold = snapshot['inventory.lowStockThreshold'];
     const retention = snapshot['activity.retentionDays'];
-
-    if (typeof threshold === 'number') {
-      setLowStockThreshold(threshold);
-    }
 
     if (typeof retention === 'number') {
       setActivityRetentionDays(retention);

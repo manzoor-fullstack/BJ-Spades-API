@@ -48,13 +48,6 @@ export class UpdateSettingsDto {
   @IsString()
   'company.timezone'?: string;
 
-  @ApiPropertyOptional({ example: 5, minimum: 0, maximum: 1000 })
-  @IsOptional()
-  @IsInt()
-  @Min(SETTINGS_REGISTRY['inventory.lowStockThreshold'].min)
-  @Max(SETTINGS_REGISTRY['inventory.lowStockThreshold'].max)
-  'inventory.lowStockThreshold'?: number;
-
   // `@Transform(toBooleanFlag)` reads the raw value off `params.obj`:
   // implicit conversion runs first and turns the string "false" into `true`,
   // which would silently flip a toggle the operator meant to switch off.

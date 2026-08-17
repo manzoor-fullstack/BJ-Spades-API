@@ -3,11 +3,6 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 
 import {
-  getLowStockThreshold,
-  LOW_STOCK_THRESHOLD,
-  setLowStockThreshold,
-} from '../../../common/constants/stock';
-import {
   ACTIVITY_RETENTION_DAYS,
   getActivityRetentionDays,
   setActivityRetentionDays,
@@ -92,8 +87,6 @@ describe('settings registry', () => {
     ['security.sessionTimeoutMinutes', 43201, 'must be at most 43200'],
     ['activity.retentionDays', 29, 'must be at least 30'],
     ['activity.retentionDays', 731, 'must be at most 730'],
-    ['inventory.lowStockThreshold', -1, 'must be at least 0'],
-    ['inventory.lowStockThreshold', 1001, 'must be at most 1000'],
   ] as [SettingKey, number, string][])(
     '%s rejects %s',
     (key, value, message) => {
@@ -218,9 +211,8 @@ describe('SettingsService', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
-    // The threshold and retention window are process-wide; leaving one set
-    // would make an unrelated suite fail on ordering.
-    setLowStockThreshold(LOW_STOCK_THRESHOLD);
+    // The retention window is process-wide; leaving it set would make an
+    // unrelated suite fail on ordering.
     setActivityRetentionDays(ACTIVITY_RETENTION_DAYS);
   });
 
@@ -294,29 +286,24 @@ describe('SettingsService', () => {
   });
 
   describe('applying', () => {
-    it('pushes the stored threshold and retention window into their consumers', async () => {
+    it('pushes the stored retention window into its consumer', async () => {
       repository.findAll.mockResolvedValue([
-        { key: 'inventory.lowStockThreshold', value: 25 },
         { key: 'activity.retentionDays', value: 365 },
       ]);
 
       await service.getAll();
 
-      expect(getLowStockThreshold()).toBe(25);
       expect(getActivityRetentionDays()).toBe(365);
     });
 
-    it('applies a saved threshold without waiting for the next read', async () => {
+    it('applies a saved retention window without waiting for the next read', async () => {
       repository.findAll
         .mockResolvedValueOnce([])
-        .mockResolvedValue([{ key: 'inventory.lowStockThreshold', value: 20 }]);
+        .mockResolvedValue([{ key: 'activity.retentionDays', value: 365 }]);
 
-      await service.update(
-        patch({ 'inventory.lowStockThreshold': 20 }),
-        'admin-1',
-      );
+      await service.update(patch({ 'activity.retentionDays': 365 }), 'admin-1');
 
-      expect(getLowStockThreshold()).toBe(20);
+      expect(getActivityRetentionDays()).toBe(365);
     });
   });
 

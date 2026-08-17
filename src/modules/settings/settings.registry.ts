@@ -39,7 +39,6 @@ export interface SettingDefinition {
  * |--------------------------------|------------------------------------------|
  * | security.sessionTimeoutMinutes | `Session.expiresAt` at login             |
  * | activity.retentionDays         | `ActivityLogService.pruneOlderThan`      |
- * | inventory.lowStockThreshold    | `isLowStock` in common/constants/stock   |
  * | company.*                      | Returned for display                     |
  *
  * The four `notifications.*` toggles are the documented exception: they are
@@ -73,16 +72,6 @@ export const SETTINGS_REGISTRY = {
     default: 'America/New_York',
     description: 'IANA timezone used when displaying dates',
   },
-  'inventory.lowStockThreshold': {
-    group: 'general',
-    type: 'int',
-    default: 5,
-    description:
-      'Stock at or below this level is reported as running low. Zero is out of stock, which is shown differently.',
-    min: 0,
-    max: 1000,
-  },
-
   'notifications.newUsers': {
     group: 'notifications',
     type: 'boolean',
