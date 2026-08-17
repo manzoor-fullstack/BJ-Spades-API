@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   OnModuleInit,
@@ -14,6 +15,8 @@ import { RequestContext } from '../../common/http/request-context.util';
 import { PasswordService } from '../../common/password/password.service';
 import { ActivityLogService } from '../activity/activity.service';
 import { SettingsService } from '../settings/settings.service';
+import { MediaService } from '../storage/media.service';
+import type { ValidatableUpload } from '../storage/image-validation';
 
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
@@ -24,6 +27,15 @@ import { TokenService } from './services/token.service';
 
 /** Deliberately identical for unknown email and wrong password. */
 const INVALID_CREDENTIALS = 'Invalid email or password.';
+
+/** Storage folder for profile pictures; mirrors TOURNAMENT_IMAGE_FOLDER. */
+const ADMIN_AVATAR_FOLDER = 'avatars';
+
+/**
+ * Avatars are rendered in a 32px circle in the header and around 96px on the
+ * profile page. 512 leaves room for high-DPI screens without storing a banner.
+ */
+const AVATAR_EDGE_PX = 512;
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -43,6 +55,7 @@ export class AuthService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly activityLog: ActivityLogService,
     private readonly settings: SettingsService,
+    private readonly media: MediaService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -299,26 +312,69 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * Updates the caller's own name.
+   * Updates the caller's own name and avatar.
    *
    * `adminId` is supplied by the controller from `@CurrentAdmin()`. There is
    * deliberately no id in the DTO, so no request can point this at anyone else.
    *
-   * Avatar handling is added in the next task; `removeAvatar` is accepted and
-   * ignored until then.
+   * The write order is the same one `TournamentsService.update` uses: upload,
+   * then update the row, then delete what the row no longer points at. The
+   * failure it is chosen to avoid is a profile referencing a file that has
+   * already been deleted.
    */
-  async updateProfile(adminId: string, dto: UpdateProfileDto) {
-    const data: { firstName?: string; lastName?: string } = {};
+  async updateProfile(
+    adminId: string,
+    dto: UpdateProfileDto,
+    image?: ValidatableUpload,
+  ) {
+    if (image && dto.removeAvatar) {
+      throw new BadRequestException(
+        'Send either a new image or removeAvatar, not both.',
+      );
+    }
+
+    const existing = await this.authRepository.findAdminById(adminId);
+
+    if (!existing) {
+      throw new UnauthorizedException('Admin not found.');
+    }
+
+    const data: {
+      firstName?: string;
+      lastName?: string;
+      avatarId?: string | null;
+    } = {};
 
     if (dto.firstName !== undefined) data.firstName = dto.firstName;
     if (dto.lastName !== undefined) data.lastName = dto.lastName;
 
+    // Uploaded before the update so a rejected image never half-applies the
+    // name change.
+    const asset = image
+      ? await this.media.uploadImage(image, ADMIN_AVATAR_FOLDER, adminId, {
+          maxEdge: AVATAR_EDGE_PX,
+          fit: 'cover',
+        })
+      : null;
+
+    if (asset) data.avatarId = asset.id;
+    if (dto.removeAvatar) data.avatarId = null;
+
     if (Object.keys(data).length > 0) {
-      await this.authRepository.updateAdminProfile(adminId, data);
+      try {
+        await this.authRepository.updateAdminProfile(adminId, data);
+      } catch (error) {
+        // The row never took the reference, so the file is already garbage.
+        await this.media.deleteAsset(asset?.id);
+        throw error;
+      }
     }
 
-    // Re-read rather than serialising the update's return value: `me()` is the
-    // one place that knows the profile shape, and two serialisers would drift.
+    if (existing.avatarId && (asset || dto.removeAvatar)) {
+      // Only once the row points somewhere else.
+      await this.media.deleteAsset(existing.avatarId);
+    }
+
     return this.me(adminId);
   }
 

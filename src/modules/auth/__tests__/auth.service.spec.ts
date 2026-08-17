@@ -1,10 +1,15 @@
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { hashToken } from '../../../common/crypto/token-hash.util';
 import { PasswordService } from '../../../common/password/password.service';
 import { ActivityLogService } from '../../activity/activity.service';
 import { SettingsService } from '../../settings/settings.service';
+import { MediaService } from '../../storage/media.service';
 import { AuthService } from '../auth.service';
 import { AuthRepository } from '../repositories/auth.repository';
 import { TokenService } from '../services/token.service';
@@ -38,12 +43,31 @@ describe('AuthService', () => {
   let tokens: Mocked<TokenService>;
   let activityLog: Pick<Mocked<ActivityLogService>, 'record'>;
   let settings: Pick<Mocked<SettingsService>, 'getSessionTimeoutMinutes'>;
+  let media: Pick<Mocked<MediaService>, 'uploadImage' | 'deleteAsset'>;
 
   beforeEach(async () => {
     repository = {
       findAdminByEmail: jest.fn(),
       findAdminById: jest.fn(),
-      getAdminProfile: jest.fn(),
+      // updateProfile() ends by calling me(), which reads through
+      // getAdminProfile. Without this every test below fails on
+      // "Cannot read properties of null (reading 'role')" — a confusing way to
+      // discover that the assertion you cared about actually passed.
+      getAdminProfile: jest.fn().mockResolvedValue({
+        id: 'admin-1',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@example.test',
+        isActive: true,
+        lastLogin: null,
+        createdAt: new Date(),
+        avatar: null,
+        role: {
+          name: 'SUPER_ADMIN',
+          displayName: 'Super Admin',
+          permissions: [],
+        },
+      }),
       findPermissionCodesForAdmin: jest.fn().mockResolvedValue([]),
       updateLastLogin: jest.fn().mockResolvedValue(undefined),
       updateAdminProfile: jest.fn().mockResolvedValue(undefined),
@@ -90,6 +114,11 @@ describe('AuthService', () => {
       getSessionTimeoutMinutes: jest.fn().mockResolvedValue(10080),
     };
 
+    media = {
+      uploadImage: jest.fn(),
+      deleteAsset: jest.fn().mockResolvedValue(undefined),
+    };
+
     service = new AuthService(
       repository as unknown as AuthRepository,
       passwords as unknown as PasswordService,
@@ -97,6 +126,7 @@ describe('AuthService', () => {
       config,
       activityLog as unknown as ActivityLogService,
       settings as unknown as SettingsService,
+      media as unknown as MediaService,
     );
 
     await service.onModuleInit();
@@ -458,6 +488,103 @@ describe('AuthService', () => {
       repository.getAdminProfile.mockResolvedValue(null);
 
       await expect(service.me('gone')).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('updateProfile', () => {
+    const IMAGE = { buffer: Buffer.from('x'), mimetype: 'image/png' };
+
+    it('refuses an image and removeAvatar together', async () => {
+      await expect(
+        service.updateProfile('admin-1', { removeAvatar: true }, IMAGE),
+      ).rejects.toThrow(BadRequestException);
+
+      // Nothing was uploaded, so nothing needs cleaning up.
+      expect(media.uploadImage).not.toHaveBeenCalled();
+    });
+
+    it('uploads to the avatars folder at 512px, cropped square', async () => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        avatarId: null,
+      });
+      media.uploadImage.mockResolvedValue({ id: 'asset-new' });
+
+      await service.updateProfile('admin-1', {}, IMAGE);
+
+      expect(media.uploadImage).toHaveBeenCalledWith(
+        IMAGE,
+        'avatars',
+        'admin-1',
+        { maxEdge: 512, fit: 'cover' },
+      );
+      expect(repository.updateAdminProfile).toHaveBeenCalledWith('admin-1', {
+        avatarId: 'asset-new',
+      });
+    });
+
+    it('deletes the previous asset only after the row points at the new one', async () => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        avatarId: 'asset-old',
+      });
+      media.uploadImage.mockResolvedValue({ id: 'asset-new' });
+
+      const order: string[] = [];
+      repository.updateAdminProfile.mockImplementation(() => {
+        order.push('update');
+        return Promise.resolve();
+      });
+      media.deleteAsset.mockImplementation(() => {
+        order.push('delete');
+        return Promise.resolve();
+      });
+
+      await service.updateProfile('admin-1', {}, IMAGE);
+
+      expect(order).toEqual(['update', 'delete']);
+      expect(media.deleteAsset).toHaveBeenCalledWith('asset-old');
+    });
+
+    it('cleans up the new asset when the row update fails', async () => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        avatarId: null,
+      });
+      media.uploadImage.mockResolvedValue({ id: 'asset-new' });
+      repository.updateAdminProfile.mockRejectedValue(new Error('db down'));
+
+      await expect(service.updateProfile('admin-1', {}, IMAGE)).rejects.toThrow(
+        'db down',
+      );
+
+      // Otherwise every failed save leaks a file nothing references.
+      expect(media.deleteAsset).toHaveBeenCalledWith('asset-new');
+    });
+
+    it('clears the relation and deletes the file on removeAvatar', async () => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        avatarId: 'asset-old',
+      });
+
+      await service.updateProfile('admin-1', { removeAvatar: true });
+
+      expect(repository.updateAdminProfile).toHaveBeenCalledWith('admin-1', {
+        avatarId: null,
+      });
+      expect(media.deleteAsset).toHaveBeenCalledWith('asset-old');
+    });
+
+    it('does not touch storage when removeAvatar is sent but there is no avatar', async () => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        avatarId: null,
+      });
+
+      await service.updateProfile('admin-1', { removeAvatar: true });
+
+      expect(media.deleteAsset).not.toHaveBeenCalled();
     });
   });
 });

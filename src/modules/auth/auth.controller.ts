@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import {
@@ -23,6 +24,7 @@ import type { Request } from 'express';
 import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { extractRequestContext } from '../../common/http/request-context.util';
+import type { ValidatableUpload } from '../storage/image-validation';
 import { ImageUploadInterceptor } from '../storage/image-upload.interceptor';
 
 import { AuthService } from './auth.service';
@@ -130,7 +132,8 @@ export class AuthController {
   updateMe(
     @CurrentAdmin() admin: AuthenticatedAdmin,
     @Body() dto: UpdateProfileDto,
+    @UploadedFile() image: ValidatableUpload | undefined,
   ) {
-    return this.authService.updateProfile(admin.id, dto);
+    return this.authService.updateProfile(admin.id, dto, image);
   }
 }

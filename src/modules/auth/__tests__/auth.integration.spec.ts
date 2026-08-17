@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import sharp from 'sharp';
 
 import { createTestApp, SEEDED_ADMIN } from '../../../../test/create-test-app';
 import { testPrisma } from '../../../../test/setup';
@@ -505,6 +506,128 @@ describe('Auth (integration)', () => {
         .patch('/api/auth/me')
         .field('firstName', 'Nope')
         .expect(401);
+    });
+
+    const pngBytes = async (width: number, height: number): Promise<Buffer> =>
+      sharp({
+        create: {
+          width,
+          height,
+          channels: 3,
+          background: { r: 20, g: 10, b: 40 },
+        },
+      })
+        .png()
+        .toBuffer();
+
+    afterEach(async () => {
+      // Undo any avatar left behind, so the suite is order-independent.
+      const admin = await testPrisma.admin.findUniqueOrThrow({
+        where: { email: SEEDED_ADMIN.email },
+        select: { avatarId: true },
+      });
+
+      if (admin.avatarId) {
+        await testPrisma.admin.update({
+          where: { email: SEEDED_ADMIN.email },
+          data: { avatarId: null },
+        });
+        await testPrisma.mediaAsset.delete({ where: { id: admin.avatarId } });
+      }
+    });
+
+    it('stores an uploaded avatar as a square webp and returns its url', async () => {
+      const { tokens } = await login();
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .attach('image', await pngBytes(1000, 600), 'me.png')
+        .expect(200);
+
+      const body = response.body as { data: { avatarUrl: string | null } };
+
+      // LocalDiskStorageService always serves from `${PUBLIC_URL}/uploads/<key>`
+      // (see its class doc), so the URL is absolute rather than
+      // root-relative — matched here without anchoring to the start of the
+      // string so the assertion holds regardless of PUBLIC_URL's value.
+      expect(body.data.avatarUrl).toMatch(/\/uploads\/avatars\/.+\.webp$/);
+
+      const asset = await testPrisma.mediaAsset.findFirstOrThrow({
+        where: { url: body.data.avatarUrl ?? '' },
+      });
+
+      expect(asset.mimeType).toBe('image/webp');
+      expect(asset.width).toBe(512);
+      expect(asset.height).toBe(512);
+    });
+
+    it('replaces an avatar and deletes the previous asset', async () => {
+      const { tokens } = await login();
+
+      const first = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .attach('image', await pngBytes(800, 800), 'first.png')
+        .expect(200);
+
+      const firstUrl = (first.body as { data: { avatarUrl: string } }).data
+        .avatarUrl;
+      const firstAsset = await testPrisma.mediaAsset.findFirstOrThrow({
+        where: { url: firstUrl },
+      });
+
+      const second = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .attach('image', await pngBytes(800, 800), 'second.png')
+        .expect(200);
+
+      const secondUrl = (second.body as { data: { avatarUrl: string } }).data
+        .avatarUrl;
+
+      expect(secondUrl).not.toBe(firstUrl);
+
+      const gone = await testPrisma.mediaAsset.findUnique({
+        where: { id: firstAsset.id },
+      });
+
+      expect(gone).toBeNull();
+    });
+
+    it('clears the avatar on removeAvatar=true', async () => {
+      const { tokens } = await login();
+
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .attach('image', await pngBytes(400, 400), 'me.png')
+        .expect(200);
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('removeAvatar', 'true')
+        .expect(200);
+
+      expect(
+        (response.body as { data: { avatarUrl: null } }).data.avatarUrl,
+      ).toBeNull();
+    });
+
+    it('refuses a file that is not really an image', async () => {
+      const { tokens } = await login();
+
+      // Declared image/png, actually text. The magic-byte check is the one
+      // that cannot be lied to.
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .attach('image', Buffer.from('#!/bin/sh\necho pwned'), {
+          filename: 'evil.png',
+          contentType: 'image/png',
+        })
+        .expect(400);
     });
   });
 
