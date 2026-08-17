@@ -71,6 +71,7 @@ describe('AuthService', () => {
       findPermissionCodesForAdmin: jest.fn().mockResolvedValue([]),
       updateLastLogin: jest.fn().mockResolvedValue(undefined),
       updateAdminProfile: jest.fn().mockResolvedValue(undefined),
+      updateAdminPassword: jest.fn().mockResolvedValue(undefined),
       createSession: jest.fn().mockResolvedValue(SESSION),
       findSessionById: jest.fn(),
       findSessionWithAdmin: jest.fn(),
@@ -585,6 +586,78 @@ describe('AuthService', () => {
       await service.updateProfile('admin-1', { removeAvatar: true });
 
       expect(media.deleteAsset).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('changePassword', () => {
+    const STORED_HASH = 'stored-hash';
+
+    beforeEach(() => {
+      repository.findAdminById.mockResolvedValue({
+        id: 'admin-1',
+        password: STORED_HASH,
+      });
+      repository.revokeAllSessionsForAdmin.mockResolvedValue(3);
+    });
+
+    it('rejects a wrong current password with 401', async () => {
+      passwords.compare.mockResolvedValue(false);
+
+      await expect(
+        service.changePassword('admin-1', 'session-1', {
+          currentPassword: 'wrong',
+          newPassword: 'BrandNew123!',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(repository.updateAdminPassword).not.toHaveBeenCalled();
+      // A failed attempt must not sign anybody out.
+      expect(repository.revokeAllSessionsForAdmin).not.toHaveBeenCalled();
+    });
+
+    it('rejects a new password identical to the current one', async () => {
+      passwords.compare.mockResolvedValue(true);
+
+      await expect(
+        service.changePassword('admin-1', 'session-1', {
+          currentPassword: 'Same12345!',
+          newPassword: 'Same12345!',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(repository.updateAdminPassword).not.toHaveBeenCalled();
+    });
+
+    it('stores a hash, never the plaintext', async () => {
+      passwords.compare.mockResolvedValue(true);
+      passwords.hash.mockResolvedValue('new-hash');
+
+      await service.changePassword('admin-1', 'session-1', {
+        currentPassword: 'Old12345!',
+        newPassword: 'BrandNew123!',
+      });
+
+      expect(passwords.hash).toHaveBeenCalledWith('BrandNew123!');
+      expect(repository.updateAdminPassword).toHaveBeenCalledWith(
+        'admin-1',
+        'new-hash',
+      );
+    });
+
+    it('revokes the other sessions and spares the current one', async () => {
+      passwords.compare.mockResolvedValue(true);
+      passwords.hash.mockResolvedValue('new-hash');
+
+      const result = await service.changePassword('admin-1', 'session-1', {
+        currentPassword: 'Old12345!',
+        newPassword: 'BrandNew123!',
+      });
+
+      expect(repository.revokeAllSessionsForAdmin).toHaveBeenCalledWith(
+        'admin-1',
+        'session-1',
+      );
+      expect(result).toEqual({ sessionsEnded: 3 });
     });
   });
 });

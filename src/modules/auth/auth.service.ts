@@ -18,6 +18,7 @@ import { SettingsService } from '../settings/settings.service';
 import { MediaService } from '../storage/media.service';
 import type { ValidatableUpload } from '../storage/image-validation';
 
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -376,6 +377,54 @@ export class AuthService implements OnModuleInit {
     }
 
     return this.me(adminId);
+  }
+
+  /**
+   * Changes the caller's own password and signs their other devices out.
+   *
+   * Other sessions go because the usual reason to change a password is that it
+   * leaked; the current session survives so that acting correctly is not
+   * punished with an immediate re-login.
+   *
+   * Nothing about the password reaches the audit log — see the AuditLog
+   * decorator on the controller, which deliberately records no metadata.
+   */
+  async changePassword(
+    adminId: string,
+    sessionId: string,
+    dto: ChangePasswordDto,
+  ): Promise<{ sessionsEnded: number }> {
+    const admin = await this.authRepository.findAdminById(adminId);
+
+    if (!admin) {
+      throw new UnauthorizedException('Admin not found.');
+    }
+
+    const matches = await this.passwordService.compare(
+      dto.currentPassword,
+      admin.password,
+    );
+
+    if (!matches) {
+      throw new UnauthorizedException('Your current password is incorrect.');
+    }
+
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException(
+        'The new password must be different from your current one.',
+      );
+    }
+
+    const hashed = await this.passwordService.hash(dto.newPassword);
+
+    await this.authRepository.updateAdminPassword(adminId, hashed);
+
+    const sessionsEnded = await this.authRepository.revokeAllSessionsForAdmin(
+      adminId,
+      sessionId,
+    );
+
+    return { sessionsEnded };
   }
 
   // ─── Internals ───────────────────────────────────────────────

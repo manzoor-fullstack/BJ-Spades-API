@@ -30,6 +30,7 @@ import { ImageUploadInterceptor } from '../storage/image-upload.interceptor';
 import { AuthService } from './auth.service';
 import { CurrentAdmin } from './decorators/current-admin.decorator';
 import { Public } from './decorators/public.decorator';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -135,5 +136,27 @@ export class AuthController {
     @UploadedFile() image: ValidatableUpload | undefined,
   ) {
     return this.authService.updateProfile(admin.id, dto, image);
+  }
+
+  @ApiBearerAuth('access-token')
+  // Tighter than the global limit, for the same reason login is: this endpoint
+  // accepts a password and is therefore worth brute-forcing. An admin changing
+  // their own password does it once.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Change your own password',
+    description:
+      'Self-service: no permission code required. Signs out every other session for this admin.',
+  })
+  @ApiResponse({ status: 200, description: 'Changed; reports sessionsEnded' })
+  @ApiResponse({ status: 401, description: 'The current password is wrong' })
+  @ApiResponse({ status: 429, description: 'Too many attempts' })
+  changePassword(
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(admin.id, admin.sessionId, dto);
   }
 }

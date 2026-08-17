@@ -647,4 +647,96 @@ describe('Auth (integration)', () => {
       expect(live).toBe(0);
     });
   });
+
+  describe('POST /api/auth/change-password', () => {
+    const NEW_PASSWORD = 'ChangedByTest123!';
+
+    // Restores the seeded password by going through the endpoint itself, so a
+    // failure here cannot leave the seeded admin locked out of later specs.
+    const restore = async () => {
+      const { tokens } = await login({
+        email: SEEDED_ADMIN.email,
+        password: NEW_PASSWORD,
+      });
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({
+          currentPassword: NEW_PASSWORD,
+          newPassword: SEEDED_ADMIN.password,
+        })
+        .expect(200);
+    };
+
+    it('rejects a wrong current password with 401', async () => {
+      const { tokens } = await login();
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({ currentPassword: 'not-it', newPassword: 'Whatever123!' })
+        .expect(401);
+
+      // The old password still works, i.e. nothing was written.
+      await login();
+    });
+
+    it('rejects a new password under 8 characters', async () => {
+      const { tokens } = await login();
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({ currentPassword: SEEDED_ADMIN.password, newPassword: 'short1' })
+        .expect(400);
+    });
+
+    it('changes the password and reports the sessions it ended', async () => {
+      // Two sessions: the one that changes the password, and one that should
+      // be killed by it.
+      const doomed = await login();
+      const current = await login();
+
+      const response = await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${current.tokens.accessToken}`)
+        .send({
+          currentPassword: SEEDED_ADMIN.password,
+          newPassword: NEW_PASSWORD,
+        })
+        .expect(200);
+
+      const body = response.body as { data: { sessionsEnded: number } };
+
+      expect(body.data.sessionsEnded).toBeGreaterThanOrEqual(1);
+
+      // The other device is out.
+      await request(server())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${doomed.tokens.accessToken}`)
+        .expect(401);
+
+      // This one is still in.
+      await request(server())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${current.tokens.accessToken}`)
+        .expect(200);
+
+      // And the new password is the one that works now.
+      await request(server())
+        .post('/api/auth/login')
+        .send({ email: SEEDED_ADMIN.email, password: SEEDED_ADMIN.password })
+        .expect(401);
+
+      await restore();
+    });
+
+    it('requires authentication', async () => {
+      await request(server())
+        .post('/api/auth/change-password')
+        .send({ currentPassword: 'a', newPassword: 'BrandNew123!' })
+        .expect(401);
+    });
+  });
 });

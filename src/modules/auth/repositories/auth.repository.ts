@@ -109,6 +109,13 @@ export class AuthRepository {
     return this.prisma.admin.update({ where: { id }, data });
   }
 
+  async updateAdminPassword(id: string, hashedPassword: string) {
+    return this.prisma.admin.update({
+      where: { id },
+      data: { password: hashedPassword },
+    });
+  }
+
   // ─── Sessions ────────────────────────────────────────────────
 
   async createSession(data: CreateSessionData) {
@@ -198,11 +205,21 @@ export class AuthRepository {
     ]);
   }
 
-  /** Revokes every session for an admin, optionally sparing the current one. */
-  async revokeAllSessionsForAdmin(adminId: string, exceptSessionId?: string) {
+  /**
+   * Revokes every session for an admin, optionally sparing the current one,
+   * and returns how many were ended.
+   *
+   * The count is what `POST /auth/change-password` reports back — "3 other
+   * devices were signed out" is a materially different message from silence
+   * when the admin is changing a password because it leaked.
+   */
+  async revokeAllSessionsForAdmin(
+    adminId: string,
+    exceptSessionId?: string,
+  ): Promise<number> {
     const now = new Date();
 
-    return this.prisma.$transaction([
+    const [, sessions] = await this.prisma.$transaction([
       this.prisma.refreshToken.updateMany({
         where: {
           adminId,
@@ -220,6 +237,8 @@ export class AuthRepository {
         data: { revokedAt: now, isActive: false, revokedBy: adminId },
       }),
     ]);
+
+    return sessions.count;
   }
 
   /**
