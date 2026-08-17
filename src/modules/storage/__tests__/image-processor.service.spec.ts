@@ -167,5 +167,30 @@ describe('ImageProcessorService', () => {
       expect(processed.width).toBe(1000);
       expect(processed.height).toBe(600);
     });
+
+    it('bounds each edge at maxEdge but does not force a square', async () => {
+      // The case the square-crop test above does not reach. `cover` crops to
+      // the target ratio, but `withoutEnlargement` refuses to scale a source
+      // up — so when an edge is already under maxEdge the result is bounded
+      // rather than square. 900x500 at maxEdge 512 lands on 512x500, measured
+      // against the running service rather than assumed.
+      //
+      // This is deliberate: upscaling a small photo to 512 would trade real
+      // bytes for invented detail. It is safe because every avatar is rendered
+      // with `rounded-full object-cover`, which crops to a circle whatever the
+      // stored ratio is. The rule this pins down is "512 is an upper bound per
+      // edge", not "the output is square".
+      const buffer = await sourceImage(900, 500, 'png');
+
+      const processed = await service.process(
+        { buffer, mimetype: 'image/png', originalname: 'wide.png' },
+        { maxEdge: 512, fit: 'cover' },
+      );
+
+      expect(processed.width).toBe(512);
+      expect(processed.height).toBe(500);
+      expect(processed.width).toBeLessThanOrEqual(512);
+      expect(processed.height).toBeLessThanOrEqual(512);
+    });
   });
 });
