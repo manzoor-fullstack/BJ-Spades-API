@@ -91,6 +91,24 @@ export class AuthRepository {
     });
   }
 
+  /**
+   * Self-service profile write.
+   *
+   * The parameter type is an explicit allowlist rather than
+   * `Prisma.AdminUpdateInput`: that would accept `password`, `isActive` and
+   * `roleId`, and this method is reachable by an admin with no permissions.
+   */
+  async updateAdminProfile(
+    id: string,
+    data: {
+      firstName?: string;
+      lastName?: string;
+      avatarId?: string | null;
+    },
+  ) {
+    return this.prisma.admin.update({ where: { id }, data });
+  }
+
   // ─── Sessions ────────────────────────────────────────────────
 
   async createSession(data: CreateSessionData) {

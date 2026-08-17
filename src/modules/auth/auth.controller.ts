@@ -4,11 +4,14 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiConsumes,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -20,6 +23,7 @@ import type { Request } from 'express';
 import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { extractRequestContext } from '../../common/http/request-context.util';
+import { ImageUploadInterceptor } from '../storage/image-upload.interceptor';
 
 import { AuthService } from './auth.service';
 import { CurrentAdmin } from './decorators/current-admin.decorator';
@@ -27,6 +31,7 @@ import { Public } from './decorators/public.decorator';
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import type { AuthenticatedAdmin } from './interfaces/authenticated-admin.interface';
 
 @ApiTags('auth')
@@ -109,5 +114,23 @@ export class AuthController {
   @ApiOperation({ summary: 'Current admin profile with live permissions' })
   me(@CurrentAdmin() admin: AuthenticatedAdmin) {
     return this.authService.me(admin.id);
+  }
+
+  @ApiBearerAuth('access-token')
+  @Patch('me')
+  @UseInterceptors(ImageUploadInterceptor('image'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Update your own profile',
+    description:
+      'Self-service: no permission code required. The admin edited is always the caller.',
+  })
+  @ApiResponse({ status: 200, description: 'The updated profile' })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  updateMe(
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(admin.id, dto);
   }
 }

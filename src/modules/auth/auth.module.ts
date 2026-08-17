@@ -3,6 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { StorageModule } from '../storage/storage.module';
+
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PermissionsGuard } from './guards/permissions.guard';
@@ -15,6 +17,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     ConfigModule,
 
     PassportModule,
+
+    // Avatar uploads on PATCH /auth/me. Nothing here names a concrete storage
+    // backend — see ADR-003.
+    StorageModule,
 
     // Secrets and expiry are passed explicitly per call in TokenService,
     // because access and refresh tokens are signed with different keys.

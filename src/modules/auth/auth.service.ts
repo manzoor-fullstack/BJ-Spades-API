@@ -17,6 +17,7 @@ import { SettingsService } from '../settings/settings.service';
 
 import { AuthResponseDto, AuthTokensDto } from './dto/login-response.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { AuthRepository } from './repositories/auth.repository';
 import { TokenService } from './services/token.service';
@@ -295,6 +296,30 @@ export class AuthService implements OnModuleInit {
       lastLogin: admin.lastLogin,
       createdAt: admin.createdAt,
     };
+  }
+
+  /**
+   * Updates the caller's own name.
+   *
+   * `adminId` is supplied by the controller from `@CurrentAdmin()`. There is
+   * deliberately no id in the DTO, so no request can point this at anyone else.
+   *
+   * Avatar handling is added in the next task; `removeAvatar` is accepted and
+   * ignored until then.
+   */
+  async updateProfile(adminId: string, dto: UpdateProfileDto) {
+    const data: { firstName?: string; lastName?: string } = {};
+
+    if (dto.firstName !== undefined) data.firstName = dto.firstName;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName;
+
+    if (Object.keys(data).length > 0) {
+      await this.authRepository.updateAdminProfile(adminId, data);
+    }
+
+    // Re-read rather than serialising the update's return value: `me()` is the
+    // one place that knows the profile shape, and two serialisers would drift.
+    return this.me(adminId);
   }
 
   // ─── Internals ───────────────────────────────────────────────

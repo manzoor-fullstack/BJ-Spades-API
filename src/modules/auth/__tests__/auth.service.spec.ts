@@ -46,6 +46,7 @@ describe('AuthService', () => {
       getAdminProfile: jest.fn(),
       findPermissionCodesForAdmin: jest.fn().mockResolvedValue([]),
       updateLastLogin: jest.fn().mockResolvedValue(undefined),
+      updateAdminProfile: jest.fn().mockResolvedValue(undefined),
       createSession: jest.fn().mockResolvedValue(SESSION),
       findSessionById: jest.fn(),
       findSessionWithAdmin: jest.fn(),

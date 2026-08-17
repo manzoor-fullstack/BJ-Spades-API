@@ -347,6 +347,167 @@ describe('Auth (integration)', () => {
     });
   });
 
+  describe('PATCH /api/auth/me', () => {
+    // The seeded admin's real name, restored after each test so later specs
+    // (and the E2E suite) are not left looking at "Renamed".
+    let originalName: { firstName: string; lastName: string };
+
+    // prisma/seed only creates one Admin. The "leaves the other admin
+    // untouched" case below needs a second row to prove untouched, so one is
+    // created here and torn down after — the same approach
+    // security.integration.spec.ts uses for its OTHER_ADMIN, rather than
+    // adding a permanent second admin to the shared seed.
+    const OTHER_ADMIN_EMAIL = 'profile.other@bjspades.com';
+
+    beforeAll(async () => {
+      const admin = await testPrisma.admin.findUniqueOrThrow({
+        where: { email: SEEDED_ADMIN.email },
+        select: { firstName: true, lastName: true },
+      });
+      originalName = admin;
+
+      const adminRole = await testPrisma.role.findUniqueOrThrow({
+        where: { name: 'ADMIN' },
+      });
+
+      await testPrisma.admin.upsert({
+        where: { email: OTHER_ADMIN_EMAIL },
+        update: {},
+        create: {
+          firstName: 'Other',
+          lastName: 'Admin',
+          email: OTHER_ADMIN_EMAIL,
+          password: 'unused-in-this-suite',
+          roleId: adminRole.id,
+          isActive: true,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await testPrisma.admin.deleteMany({
+        where: { email: OTHER_ADMIN_EMAIL },
+      });
+    });
+
+    afterEach(async () => {
+      await testPrisma.admin.update({
+        where: { email: SEEDED_ADMIN.email },
+        data: originalName,
+      });
+    });
+
+    it('updates the caller’s own first and last name', async () => {
+      const { tokens } = await login();
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', 'Renamed')
+        .field('lastName', 'Admin')
+        .expect(200);
+
+      const body = response.body as {
+        data: { firstName: string; lastName: string; fullName: string };
+      };
+
+      expect(body.data.firstName).toBe('Renamed');
+      expect(body.data.lastName).toBe('Admin');
+      expect(body.data.fullName).toBe('Renamed Admin');
+    });
+
+    it('accepts one field on its own', async () => {
+      const { tokens } = await login();
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', 'OnlyFirst')
+        .expect(200);
+
+      const body = response.body as {
+        data: { firstName: string; lastName: string };
+      };
+
+      expect(body.data.firstName).toBe('OnlyFirst');
+      expect(body.data.lastName).toBe(originalName.lastName);
+    });
+
+    it('trims surrounding whitespace', async () => {
+      const { tokens } = await login();
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', '  Spaced  ')
+        .expect(200);
+
+      expect(
+        (response.body as { data: { firstName: string } }).data.firstName,
+      ).toBe('Spaced');
+    });
+
+    it('rejects a blank name', async () => {
+      const { tokens } = await login();
+
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', '   ')
+        .expect(400);
+    });
+
+    it('rejects an unknown field rather than ignoring it', async () => {
+      const { tokens } = await login();
+
+      // forbidNonWhitelisted. `role` is the field that matters: silently
+      // dropping it would look like a successful self-promotion.
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('role', 'SUPER_ADMIN')
+        .expect(400);
+    });
+
+    it('rejects a body-supplied id and leaves the other admin untouched', async () => {
+      const { tokens } = await login();
+
+      const other = await testPrisma.admin.findFirst({
+        where: { email: { not: SEEDED_ADMIN.email } },
+        select: { id: true, firstName: true },
+      });
+
+      if (!other) {
+        throw new Error(
+          'This test needs a second seeded admin; check prisma/seed.ts',
+        );
+      }
+
+      // `id` is not on the DTO, so forbidNonWhitelisted rejects it outright.
+      // That is the desired outcome: there is no path where it is honoured.
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('id', other.id)
+        .field('firstName', 'Hijacked')
+        .expect(400);
+
+      const unchanged = await testPrisma.admin.findUniqueOrThrow({
+        where: { id: other.id },
+        select: { firstName: true },
+      });
+
+      expect(unchanged.firstName).toBe(other.firstName);
+    });
+
+    it('requires authentication', async () => {
+      await request(server())
+        .patch('/api/auth/me')
+        .field('firstName', 'Nope')
+        .expect(401);
+    });
+  });
+
   describe('session revocation cascade', () => {
     it('revoking a session revokes its refresh tokens in the database', async () => {
       const { tokens } = await login();
