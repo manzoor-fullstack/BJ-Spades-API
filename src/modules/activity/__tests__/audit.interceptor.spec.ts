@@ -204,6 +204,46 @@ describe('AuditInterceptor', () => {
     expect(recorded().metadata).toEqual({ fullName: 'Ada Lovelace' });
   });
 
+  // Multer (wired in as a route-level interceptor, e.g. ImageUploadInterceptor)
+  // runs after this global interceptor's synchronous snapshot, and replaces
+  // `req.body` wholesale rather than mutating it — so a multipart route's
+  // eager snapshot is always empty, never a value a handler could have
+  // mutated. These two tests simulate that with a handler that populates
+  // `request.body` only once it runs, the same shape multer's timing produces.
+  it('falls back to the live request body when the snapshot is undefined', async () => {
+    const request = requestStub({ body: undefined });
+
+    const parsing: CallHandler = {
+      handle: () => {
+        request.body = { firstName: 'Audited' };
+        return of(RESULT);
+      },
+    };
+
+    await firstValueFrom(
+      interceptor.intercept(executionContext(request), parsing),
+    );
+
+    expect(recorded().metadata).toEqual({ firstName: 'Audited' });
+  });
+
+  it('falls back to the live request body when the snapshot is an empty object', async () => {
+    const request = requestStub({ body: {} });
+
+    const parsing: CallHandler = {
+      handle: () => {
+        request.body = { firstName: 'Audited' };
+        return of(RESULT);
+      },
+    };
+
+    await firstValueFrom(
+      interceptor.intercept(executionContext(request), parsing),
+    );
+
+    expect(recorded().metadata).toEqual({ firstName: 'Audited' });
+  });
+
   it('writes nothing when the handler throws', async () => {
     const failing: CallHandler = {
       handle: () => throwError(() => new Error('handler exploded')),

@@ -65,12 +65,15 @@ export class AuditInterceptor implements NestInterceptor {
 
     // Snapshotted before the handler runs: a handler is free to mutate the
     // body it was handed, and the audit entry must describe what was asked for.
+    const request = context.switchToHttp().getRequest<RequestWithAdmin>();
     const auditContext = this.buildContext(context);
 
     // `tap`'s next callback fires only on a successful emission.
     return next
       .handle()
-      .pipe(tap((result) => this.write(options, auditContext, result)));
+      .pipe(
+        tap((result) => this.write(options, auditContext, result, request)),
+      );
   }
 
   private buildContext(context: ExecutionContext): AuditContext {
@@ -91,9 +94,18 @@ export class AuditInterceptor implements NestInterceptor {
     options: AuditLogOptions,
     ctx: AuditContext,
     result: unknown,
+    request: RequestWithAdmin,
   ): void {
     try {
-      const input = this.buildEntry(options, ctx, result);
+      // See resolveAuditBody: a multipart route's eager snapshot is always
+      // empty, never a value the handler could have mutated, so this is the
+      // only place the live body can safely stand in for it.
+      const resolvedCtx: AuditContext = {
+        ...ctx,
+        body: this.resolveAuditBody(ctx.body, request),
+      };
+
+      const input = this.buildEntry(options, resolvedCtx, result);
 
       // Deliberately not awaited. `record()` already swallows its own failures;
       // the catch here guards against a future change to that contract.
@@ -104,6 +116,45 @@ export class AuditInterceptor implements NestInterceptor {
       // A throwing title or entityId resolver lands here.
       this.reportFailure(options.action, error);
     }
+  }
+
+  /**
+   * `ctx.body` is deliberately snapshotted in `buildContext`, before the
+   * handler runs, so a handler cannot scrub its own audit trail by mutating
+   * the body it was given. That protection is aimed at JSON/urlencoded
+   * routes, where Express's body parser has already populated `request.body`
+   * by the time this (global) interceptor runs, so the snapshot is already
+   * the real submitted body.
+   *
+   * Multipart routes break that assumption a different way: multer is wired
+   * in as a *route-level* interceptor (`ImageUploadInterceptor`), which — per
+   * Nest's `[...global, ...class, ...method]` interceptor ordering
+   * (`ContextCreator.createContext`) — runs after this global interceptor's
+   * synchronous setup, and it replaces `req.body` wholesale
+   * (`Object.create(null)`, see multer's `make-middleware.js`) rather than
+   * mutating whatever was there. The eager snapshot for those routes is
+   * therefore always empty, never a value a handler mutated, so falling back
+   * to the live body here cannot reintroduce the mutation risk the snapshot
+   * exists to prevent — the fallback only ever fires when the snapshot could
+   * not possibly have been meaningful in the first place.
+   */
+  private resolveAuditBody(
+    snapshot: unknown,
+    request: RequestWithAdmin,
+  ): unknown {
+    return this.isEmptyBody(snapshot) ? request.body : snapshot;
+  }
+
+  private isEmptyBody(body: unknown): boolean {
+    if (body === undefined || body === null) {
+      return true;
+    }
+
+    if (typeof body === 'object') {
+      return Object.keys(body as Record<string, unknown>).length === 0;
+    }
+
+    return false;
   }
 
   private buildEntry(
