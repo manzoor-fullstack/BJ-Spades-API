@@ -290,6 +290,7 @@ export class AuthService implements OnModuleInit {
       role: admin.role.name,
       roleDisplayName: admin.role.displayName,
       permissions: admin.role.permissions.map((rp) => rp.permission.code),
+      avatarUrl: admin.avatar?.url ?? null,
       isActive: admin.isActive,
       lastLogin: admin.lastLogin,
       createdAt: admin.createdAt,

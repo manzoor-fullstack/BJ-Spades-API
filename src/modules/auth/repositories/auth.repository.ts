@@ -32,6 +32,16 @@ const ROLE_WITH_PERMISSIONS = {
   },
 } as const;
 
+/**
+ * Everything `GET /auth/me` serialises. The avatar is a separate include
+ * because the guard's hot path (`findPermissionCodesForAdmin`) must not pay
+ * for a join it never reads.
+ */
+const PROFILE_INCLUDE = {
+  ...ROLE_WITH_PERMISSIONS,
+  avatar: true,
+} as const;
+
 @Injectable()
 export class AuthRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -55,7 +65,7 @@ export class AuthRepository {
   async getAdminProfile(id: string) {
     return this.prisma.admin.findUnique({
       where: { id },
-      include: ROLE_WITH_PERMISSIONS,
+      include: PROFILE_INCLUDE,
     });
   }
 

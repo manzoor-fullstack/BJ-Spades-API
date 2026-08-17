@@ -183,6 +183,22 @@ describe('Auth (integration)', () => {
         .set('Authorization', 'Bearer not.a.jwt')
         .expect(401);
     });
+
+    it('includes avatarUrl, null when no picture has been uploaded', async () => {
+      const { tokens } = await login();
+
+      const response = await request(server())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .expect(200);
+
+      const body = response.body as { data: { avatarUrl: string | null } };
+
+      // The key must be present and explicitly null — an absent key would let
+      // the client render a broken <img src="undefined">.
+      expect(body.data).toHaveProperty('avatarUrl');
+      expect(body.data.avatarUrl).toBeNull();
+    });
   });
 
   describe('POST /api/auth/refresh', () => {
