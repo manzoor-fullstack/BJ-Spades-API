@@ -6,6 +6,7 @@ import sharp from 'sharp';
 
 import { createTestApp, SEEDED_ADMIN } from '../../../../test/create-test-app';
 import { testPrisma } from '../../../../test/setup';
+import { PasswordService } from '../../../common/password/password.service';
 
 interface Tokens {
   accessToken: string;
@@ -802,6 +803,98 @@ describe('Auth (integration)', () => {
           newPassword: SEEDED_ADMIN.password,
         })
         .expect(200);
+    });
+  });
+
+  describe('self-service without any permission', () => {
+    const EMAIL = 'nopermissions@bjspades.test';
+    const PASSWORD = 'NoPerms123!';
+    let adminId: string;
+
+    beforeAll(async () => {
+      const role = await testPrisma.role.upsert({
+        where: { name: 'NO_PERMISSIONS_TEST' },
+        update: {},
+        create: {
+          name: 'NO_PERMISSIONS_TEST',
+          displayName: 'No Permissions (test)',
+        },
+      });
+
+      // bcrypt hash of PASSWORD, generated here rather than pasted so the
+      // cost factor always matches PasswordService.
+      const hashed = await new PasswordService().hash(PASSWORD);
+
+      const admin = await testPrisma.admin.upsert({
+        where: { email: EMAIL },
+        update: { password: hashed, roleId: role.id, isActive: true },
+        create: {
+          email: EMAIL,
+          firstName: 'No',
+          lastName: 'Permissions',
+          password: hashed,
+          roleId: role.id,
+        },
+      });
+
+      adminId = admin.id;
+    });
+
+    afterAll(async () => {
+      await testPrisma.activityLog.deleteMany({ where: { adminId } });
+      await testPrisma.session.deleteMany({ where: { adminId } });
+      await testPrisma.admin.deleteMany({ where: { id: adminId } });
+      await testPrisma.role.deleteMany({
+        where: { name: 'NO_PERMISSIONS_TEST' },
+      });
+    });
+
+    it('confirms the fixture really has no permissions', async () => {
+      const { tokens } = await login({ email: EMAIL, password: PASSWORD });
+
+      const response = await request(server())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .expect(200);
+
+      const body = response.body as { data: { permissions: string[] } };
+
+      expect(body.data.permissions).toEqual([]);
+
+      // And is therefore locked out of the admin route that would otherwise
+      // be the only way to edit itself.
+      await request(server())
+        .patch(`/api/admins/${adminId}`)
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({ firstName: 'Blocked' })
+        .expect(403);
+    });
+
+    it('can still rename itself through PATCH /auth/me', async () => {
+      const { tokens } = await login({ email: EMAIL, password: PASSWORD });
+
+      const response = await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', 'Selfserved')
+        .expect(200);
+
+      expect(
+        (response.body as { data: { firstName: string } }).data.firstName,
+      ).toBe('Selfserved');
+    });
+
+    it('can still change its own password', async () => {
+      const { tokens } = await login({ email: EMAIL, password: PASSWORD });
+      const next = 'RotatedByMe123!';
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({ currentPassword: PASSWORD, newPassword: next })
+        .expect(200);
+
+      await login({ email: EMAIL, password: next });
     });
   });
 });
