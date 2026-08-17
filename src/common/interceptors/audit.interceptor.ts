@@ -63,8 +63,11 @@ export class AuditInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    // Snapshotted before the handler runs: a handler is free to mutate the
-    // body it was handed, and the audit entry must describe what was asked for.
+    // `body: request.body` below stores a reference, not a copy — it defends
+    // against a handler wholesale-reassigning `request.body` to something
+    // else, not against in-place mutation (e.g. `delete body.password`),
+    // which stays visible through this reference exactly as it would through
+    // `request.body` itself.
     const request = context.switchToHttp().getRequest<RequestWithAdmin>();
     const auditContext = this.buildContext(context);
 

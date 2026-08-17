@@ -652,23 +652,23 @@ describe('Auth (integration)', () => {
   describe('POST /api/auth/change-password', () => {
     const NEW_PASSWORD = 'ChangedByTest123!';
 
-    // Restores the seeded password by going through the endpoint itself, so a
-    // failure here cannot leave the seeded admin locked out of later specs.
-    const restore = async () => {
-      const { tokens } = await login({
-        email: SEEDED_ADMIN.email,
-        password: NEW_PASSWORD,
+    // Resets the seeded password directly against the database, not through
+    // the endpoint: an in-body restore only runs as the last statement of a
+    // test, so an earlier assertion throwing would skip it and leave the
+    // seeded admin locked out for every later suite in this file, every later
+    // suite in the run, and the developer's local database (Admin is in
+    // PRESERVED_TABLES in test/setup.ts, so per-test truncation will not
+    // recover it). `afterEach` runs regardless, and a direct hash write
+    // cannot itself fail on a wrong current password the way going through
+    // the endpoint could.
+    afterEach(async () => {
+      await testPrisma.admin.update({
+        where: { email: SEEDED_ADMIN.email },
+        data: {
+          password: await new PasswordService().hash(SEEDED_ADMIN.password),
+        },
       });
-
-      await request(server())
-        .post('/api/auth/change-password')
-        .set('Authorization', `Bearer ${tokens.accessToken}`)
-        .send({
-          currentPassword: NEW_PASSWORD,
-          newPassword: SEEDED_ADMIN.password,
-        })
-        .expect(200);
-    };
+    });
 
     it('rejects a wrong current password with 401', async () => {
       const { tokens } = await login();
@@ -729,8 +729,6 @@ describe('Auth (integration)', () => {
         .post('/api/auth/login')
         .send({ email: SEEDED_ADMIN.email, password: SEEDED_ADMIN.password })
         .expect(401);
-
-      await restore();
     });
 
     it('requires authentication', async () => {
@@ -742,6 +740,19 @@ describe('Auth (integration)', () => {
   });
 
   describe('profile audit trail', () => {
+    // Resets the seeded password directly, same reasoning as the afterEach in
+    // 'POST /api/auth/change-password': an in-body restore only runs if every
+    // earlier assertion in the test passes, and this suite changes the seeded
+    // password to check the audit row.
+    afterEach(async () => {
+      await testPrisma.admin.update({
+        where: { email: SEEDED_ADMIN.email },
+        data: {
+          password: await new PasswordService().hash(SEEDED_ADMIN.password),
+        },
+      });
+    });
+
     it('logs a profile update naming the changed fields, not their values', async () => {
       const { tokens } = await login();
 
@@ -751,13 +762,17 @@ describe('Auth (integration)', () => {
         .field('firstName', 'Audited')
         .expect(200);
 
-      const entry = await testPrisma.activityLog.findFirstOrThrow({
-        where: { action: 'auth.profile_updated' },
-        orderBy: { createdAt: 'desc' },
-      });
+      const entry = await waitForActivityLog('auth.profile_updated');
 
       expect(entry.title).toContain(SEEDED_ADMIN.email);
-      expect(JSON.stringify(entry.metadata)).toContain('firstName');
+
+      const serialisedMetadata = JSON.stringify(entry.metadata);
+
+      expect(serialisedMetadata).toContain('firstName');
+      // The title says "not their values" — this is what actually checks
+      // that claim. Asserting only that 'firstName' appears would also pass
+      // if the raw body (i.e. the value 'Audited') were stored verbatim.
+      expect(serialisedMetadata).not.toContain('Audited');
 
       await testPrisma.admin.update({
         where: { email: SEEDED_ADMIN.email },
@@ -778,31 +793,13 @@ describe('Auth (integration)', () => {
         })
         .expect(200);
 
-      const entry = await testPrisma.activityLog.findFirstOrThrow({
-        where: { action: 'auth.password_changed' },
-        orderBy: { createdAt: 'desc' },
-      });
+      const entry = await waitForActivityLog('auth.password_changed');
 
       const serialised = JSON.stringify(entry);
 
       expect(serialised).not.toContain(newPassword);
       expect(serialised).not.toContain(SEEDED_ADMIN.password);
       expect(entry.metadata).toBeNull();
-
-      // Put the seeded password back through the endpoint.
-      const after = await login({
-        email: SEEDED_ADMIN.email,
-        password: newPassword,
-      });
-
-      await request(server())
-        .post('/api/auth/change-password')
-        .set('Authorization', `Bearer ${after.tokens.accessToken}`)
-        .send({
-          currentPassword: newPassword,
-          newPassword: SEEDED_ADMIN.password,
-        })
-        .expect(200);
     });
   });
 
@@ -897,4 +894,31 @@ describe('Auth (integration)', () => {
       await login({ email: EMAIL, password: next });
     });
   });
+
+  /**
+   * AuditInterceptor calls `activityLog.record()` without awaiting it (see
+   * that class's doc comment), so a query issued right after the response —
+   * over a different Prisma client and connection — has no guarantee the
+   * insert has committed yet. Same fix as `waitForActions` in
+   * admins.integration.spec.ts: poll briefly instead of asserting on the
+   * first read.
+   */
+  async function waitForActivityLog(action: string) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const entry = await testPrisma.activityLog.findFirst({
+        where: { action },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (entry) {
+        return entry;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    throw new Error(
+      `No ActivityLog row for action "${action}" appeared after polling`,
+    );
+  }
 });

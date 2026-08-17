@@ -504,7 +504,7 @@ describe('AuthService', () => {
       expect(media.uploadImage).not.toHaveBeenCalled();
     });
 
-    it('uploads to the avatars folder at 512px, cropped square', async () => {
+    it('uploads to the avatars folder with each edge bounded at 512px', async () => {
       repository.findAdminById.mockResolvedValue({
         id: 'admin-1',
         avatarId: null,

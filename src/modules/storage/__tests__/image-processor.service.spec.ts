@@ -189,8 +189,6 @@ describe('ImageProcessorService', () => {
 
       expect(processed.width).toBe(512);
       expect(processed.height).toBe(500);
-      expect(processed.width).toBeLessThanOrEqual(512);
-      expect(processed.height).toBeLessThanOrEqual(512);
     });
   });
 });

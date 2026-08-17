@@ -35,6 +35,14 @@ const ADMIN_AVATAR_FOLDER = 'avatars';
 /**
  * Avatars are rendered in a 32px circle in the header and around 96px on the
  * profile page. 512 leaves room for high-DPI screens without storing a banner.
+ *
+ * Bounds each edge at 512, not the same as guaranteeing a square output:
+ * `fit: 'cover'` with `withoutEnlargement: true` (see ImageProcessorService)
+ * refuses to upscale a source that is smaller than 512 on one edge, so e.g. a
+ * 900x500 source stays 512x500. That is deliberate — inventing pixels to force
+ * a square would trade real detail for none — and safe, because every render
+ * uses `rounded-full object-cover`, which crops to a circle regardless of the
+ * stored aspect ratio.
  */
 const AVATAR_EDGE_PX = 512;
 
