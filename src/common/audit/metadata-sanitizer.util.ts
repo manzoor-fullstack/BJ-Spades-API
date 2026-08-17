@@ -16,6 +16,7 @@ export const SENSITIVE_METADATA_KEYS: readonly string[] = [
   'password',
   'newPassword',
   'currentPassword',
+  'confirmPassword',
   'token',
   'accessToken',
   'refreshToken',

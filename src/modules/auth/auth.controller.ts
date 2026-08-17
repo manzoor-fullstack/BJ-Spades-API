@@ -157,9 +157,13 @@ export class AuthController {
     title: (ctx) => `${ctx.admin?.email ?? 'An admin'} changed their password`,
     entityType: 'Admin',
     entityId: (ctx) => ctx.admin?.id,
-    // No `metadata` key at all. `ctx.body` is {currentPassword, newPassword};
-    // any metadata function here is one refactor away from writing a password
-    // into a table that survives forever.
+    // Explicit, not omitted: AuditInterceptor's default metadata source is the
+    // raw request body (see buildEntry in audit.interceptor.ts), so leaving
+    // this key out would log {currentPassword, newPassword} verbatim. What
+    // actually keeps password material out of the row today is the denylist
+    // in sanitizeMetadata (SENSITIVE_METADATA_KEYS) — this `() => ({})` is a
+    // second, independent guard that does not depend on remembering that.
+    metadata: () => ({}),
   })
   // Tighter than the global limit, for the same reason login is: this endpoint
   // accepts a password and is therefore worth brute-forcing. An admin changing
