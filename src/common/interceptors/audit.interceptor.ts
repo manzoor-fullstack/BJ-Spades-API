@@ -151,7 +151,7 @@ export class AuditInterceptor implements NestInterceptor {
     }
 
     if (typeof body === 'object') {
-      return Object.keys(body as Record<string, unknown>).length === 0;
+      return Object.keys(body).length === 0;
     }
 
     return false;
