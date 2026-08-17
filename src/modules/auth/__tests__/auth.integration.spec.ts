@@ -739,4 +739,69 @@ describe('Auth (integration)', () => {
         .expect(401);
     });
   });
+
+  describe('profile audit trail', () => {
+    it('logs a profile update naming the changed fields, not their values', async () => {
+      const { tokens } = await login();
+
+      await request(server())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .field('firstName', 'Audited')
+        .expect(200);
+
+      const entry = await testPrisma.activityLog.findFirstOrThrow({
+        where: { action: 'auth.profile_updated' },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      expect(entry.title).toContain(SEEDED_ADMIN.email);
+      expect(JSON.stringify(entry.metadata)).toContain('firstName');
+
+      await testPrisma.admin.update({
+        where: { email: SEEDED_ADMIN.email },
+        data: { firstName: 'Super' },
+      });
+    });
+
+    it('logs a password change with no password material anywhere on the row', async () => {
+      const { tokens } = await login();
+      const newPassword = 'AuditCheck123!';
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${tokens.accessToken}`)
+        .send({
+          currentPassword: SEEDED_ADMIN.password,
+          newPassword,
+        })
+        .expect(200);
+
+      const entry = await testPrisma.activityLog.findFirstOrThrow({
+        where: { action: 'auth.password_changed' },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const serialised = JSON.stringify(entry);
+
+      expect(serialised).not.toContain(newPassword);
+      expect(serialised).not.toContain(SEEDED_ADMIN.password);
+      expect(entry.metadata).toBeNull();
+
+      // Put the seeded password back through the endpoint.
+      const after = await login({
+        email: SEEDED_ADMIN.email,
+        password: newPassword,
+      });
+
+      await request(server())
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${after.tokens.accessToken}`)
+        .send({
+          currentPassword: newPassword,
+          newPassword: SEEDED_ADMIN.password,
+        })
+        .expect(200);
+    });
+  });
 });

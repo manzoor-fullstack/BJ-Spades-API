@@ -47,6 +47,20 @@ export const ACTIVITY_ACTIONS = {
     title: 'Admin signed out of all other sessions',
     isHighPriority: false,
   },
+  AUTH_PROFILE_UPDATED: {
+    category: ActivityCategory.AUTH,
+    code: 'auth.profile_updated',
+    title: 'Admin updated their profile',
+    isHighPriority: false,
+  },
+  AUTH_PASSWORD_CHANGED: {
+    category: ActivityCategory.AUTH,
+    code: 'auth.password_changed',
+    title: 'Admin changed their password',
+    // A password change is worth surfacing: if it was not the admin who did
+    // it, this is the row that says so.
+    isHighPriority: true,
+  },
   AUTH_SESSION_REVOKED: {
     category: ActivityCategory.AUTH,
     code: 'auth.session_revoked',

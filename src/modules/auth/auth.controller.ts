@@ -120,6 +120,18 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AuditLog({
+    category: ActivityCategory.AUTH,
+    action: ACTIVITY_ACTIONS.AUTH_PROFILE_UPDATED.code,
+    title: (ctx) => `${ctx.admin?.email ?? 'An admin'} updated their profile`,
+    entityType: 'Admin',
+    entityId: (ctx) => ctx.admin?.id,
+    // Field NAMES only. The values are the admin's own details and the row is
+    // readable by anyone holding activity.view.
+    metadata: (ctx) => ({
+      fields: Object.keys((ctx.body as Record<string, unknown>) ?? {}),
+    }),
+  })
   @Patch('me')
   @UseInterceptors(ImageUploadInterceptor('image'))
   @ApiConsumes('multipart/form-data')
@@ -139,6 +151,16 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AuditLog({
+    category: ActivityCategory.AUTH,
+    action: ACTIVITY_ACTIONS.AUTH_PASSWORD_CHANGED.code,
+    title: (ctx) => `${ctx.admin?.email ?? 'An admin'} changed their password`,
+    entityType: 'Admin',
+    entityId: (ctx) => ctx.admin?.id,
+    // No `metadata` key at all. `ctx.body` is {currentPassword, newPassword};
+    // any metadata function here is one refactor away from writing a password
+    // into a table that survives forever.
+  })
   // Tighter than the global limit, for the same reason login is: this endpoint
   // accepts a password and is therefore worth brute-forcing. An admin changing
   // their own password does it once.
