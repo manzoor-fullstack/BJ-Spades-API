@@ -10,11 +10,28 @@ import { applyStaticAssets } from './modules/storage/static-assets';
 import { applyStripeRawBodyParser } from './modules/stripe/stripe-raw-body';
 import { applyWebhookRawBodyParser } from './modules/webhooks/webhook-raw-body';
 
-function parseCorsOrigins(raw: string | undefined): string[] | false {
+function parseCorsOrigins(raw: string | undefined): string[] | boolean {
   const origins = (raw ?? '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+
+  // `*` means "reflect whatever origin asked", not the literal asterisk.
+  //
+  // The difference matters because `credentials: true` is set below: browsers
+  // refuse a response that pairs `Access-Control-Allow-Origin: *` with
+  // credentials, and passing the string '*' through to the cors middleware
+  // would have it compared against the request's Origin header, never match,
+  // and quietly reject every cross-origin call. `true` echoes the caller's
+  // origin, which is what actually works.
+  //
+  // This is deliberately permissive. It is safe here only because the API
+  // authenticates with an Authorization header rather than a cookie the
+  // browser would attach on its own — a hostile page can reach the API but
+  // cannot borrow the operator's session to do it.
+  if (origins.includes('*')) {
+    return true;
+  }
 
   // Defaulting to `false` rather than `true` means a missing CORS_ORIGINS
   // fails closed. Under the BFF architecture the browser never calls this API
