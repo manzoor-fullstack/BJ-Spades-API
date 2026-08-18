@@ -10,6 +10,11 @@
 
 services:
   api:
+    # Pulled, not built, by default. The instance this runs on cannot compile
+    # the project — see .github/workflows/docker-publish.yml. `build: .` stays
+    # so `docker compose build` still works on a machine with the memory for
+    # it, but a deploy is `docker compose pull && up -d`.
+    image: ghcr.io/manzoor-fullstack/bj-spades-api:latest
     build: .
     restart: unless-stopped
     env_file: .env
