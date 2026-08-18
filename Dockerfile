@@ -23,6 +23,15 @@ COPY . .
 # The Prisma client is generated, not committed. Must run before the build:
 # the generated types are what the TypeScript compile checks against.
 RUN pnpm db:generate
+
+# tsc is the memory high-water mark of the whole image build. Node's default
+# heap is sized from available RAM, which on a small shared instance is
+# whatever is left after everything else on the box — and that was not enough:
+# the build died with SIGABRT (exit 134) and a V8 out-of-memory trace on a
+# t3-class host already running other containers. Asking for a fixed 2 GB is
+# not greed, it is making the build's requirement explicit instead of letting
+# it depend on what happens to be running next to it.
+ENV NODE_OPTIONS=--max-old-space-size=2048
 RUN pnpm build
 
 # ─── Runtime ──────────────────────────────────────────────────
