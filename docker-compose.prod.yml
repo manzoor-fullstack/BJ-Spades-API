@@ -1,0 +1,48 @@
+# Production stack for a single EC2 box.
+#
+# Postgres runs here alongside the API. If you move to RDS instead, delete the
+# `db` service and point DATABASE_URL at the RDS endpoint — nothing else changes.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Secrets come from a .env file sitting beside this one, which is NOT committed.
+# See docs/DEPLOYMENT.md.
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Bound to loopback: nginx terminates TLS and proxies to it. Exposing
+      # 5000 publicly would serve the API over plain HTTP alongside it.
+      - '127.0.0.1:5000:5000'
+    volumes:
+      # Uploaded avatars and banners. Without this, every redeploy discards
+      # them and the MediaAsset rows point at files that no longer exist.
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The API's own healthcheck cannot help here: it must not start until
+      # Postgres is actually accepting connections, or the first migration
+      # races the database's own startup.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  uploads:
+  pgdata:
