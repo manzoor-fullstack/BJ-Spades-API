@@ -12,6 +12,10 @@ FROM node:24-slim AS builder
 
 WORKDIR /app
 
+# Prisma probes libssl at runtime and warns/guesses when it cannot find it.
+# node:*-slim does not ship it.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl     && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable
 
 # Dependency manifests first, so a source-only change does not reinstall.
@@ -41,6 +45,8 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends openssl     && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable
 
 # node_modules is copied wholesale rather than reinstalled with --prod.
@@ -51,7 +57,16 @@ RUN corepack enable
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/package.json /app/prisma.config.ts ./
+COPY --from=builder /app/package.json /app/prisma.config.ts /app/tsconfig.json ./
+
+# The seed is TypeScript executed by tsx, and prisma/seed/*.ts imports the
+# permission and role constants from src/ so the seeded rows cannot drift from
+# what the code enforces. That makes src/ a runtime dependency of `prisma db
+# seed`, even though the API itself only ever runs the compiled output in
+# dist/. Without this the seed dies on MODULE_NOT_FOUND and the database comes
+# up with no roles and no first admin — the API answers 401 to every login and
+# looks broken.
+COPY --from=builder /app/src ./src
 
 # Uploaded avatars and banners live on disk (ADR-003). Without a volume
 # mounted here every redeploy silently loses them — see docs/DEPLOYMENT.md.
