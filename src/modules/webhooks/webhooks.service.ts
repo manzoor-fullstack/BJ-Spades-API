@@ -25,7 +25,10 @@ import { ActivityLogService } from '../activity/activity.service';
 
 import type { WebhookAckDto } from './dto/webhook-ack.dto';
 import type { WebhookEventsQueryDto } from './dto/webhook-events-query.dto';
-import { UserRegistrationWebhookDto } from './dto/user-registration.dto';
+import {
+  USER_REGISTRATION_EVENT,
+  UserRegistrationWebhookDto,
+} from './dto/user-registration.dto';
 import { InvalidSignatureException } from './exceptions/invalid-signature.exception';
 import {
   EVENT_ID_HEADER,
@@ -70,6 +73,9 @@ const CAPTURED_HEADERS = [
 const UNKNOWN_SOURCE = 'unknown';
 const UNKNOWN_TYPE = 'unknown';
 
+/** Recorded on every event that arrives over the GoHighLevel bearer path. */
+export const GHL_SOURCE = 'gohighlevel';
+
 function headerValue(
   headers: InboundHeaders,
   name: string,
@@ -89,6 +95,91 @@ function isUniqueViolation(error: unknown): boolean {
     'code' in error &&
     error.code === 'P2002'
   );
+}
+
+function asPlainObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Contract field -> the names it may arrive under, most deliberate first.
+ *
+ * GHL's webhook action fires "a webhook containing the contact's details"
+ * whether or not custom data is mapped, and it names those details in its own
+ * snake_case. Accepting both means a workflow needs nothing configured beyond
+ * the URL and the Authorization header — and a hand-mapped pair still wins,
+ * because someone chose it on purpose.
+ */
+const GHL_FIELD_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  contactId: ['contactId', 'contact_id'],
+  fullName: ['fullName', 'full_name'],
+  email: ['email'],
+  mobileNumber: ['mobileNumber', 'phone'],
+  tier: ['tier'],
+  addressLine1: ['addressLine1', 'address1'],
+  addressLine2: ['addressLine2', 'address2'],
+  city: ['city'],
+  state: ['state'],
+  postalCode: ['postalCode', 'postal_code'],
+  country: ['country'],
+};
+
+/**
+ * First alias holding a non-empty string.
+ *
+ * Empty is treated as absent on purpose: an unmapped GHL merge field arrives as
+ * `''`, not as a missing key, and `@IsOptional()` only skips null and
+ * undefined. Left in place, `tier: ''` fails the enum check and takes the whole
+ * registration down with it.
+ */
+function firstMapped(
+  source: Record<string, unknown>,
+  aliases: readonly string[],
+): string | undefined {
+  for (const alias of aliases) {
+    const value = source[alias];
+
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+/** Reduces any GHL body shape to the fields the registration DTO expects. */
+function normaliseGhlContact(
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  // Some GHL versions nest the mapped pairs under `customData` instead of
+  // merging them into the top level. Reading both removed the need to guess
+  // which, and the nested copy wins for the same reason a mapped alias does.
+  const merged = { ...raw, ...asPlainObject(raw.customData) };
+
+  const data: Record<string, unknown> = {};
+
+  for (const [field, aliases] of Object.entries(GHL_FIELD_ALIASES)) {
+    const value = firstMapped(merged, aliases);
+
+    if (value !== undefined) {
+      data[field] = value;
+    }
+  }
+
+  if (data.fullName === undefined) {
+    const parts = [
+      firstMapped(merged, ['firstName', 'first_name']),
+      firstMapped(merged, ['lastName', 'last_name']),
+    ].filter((part): part is string => part !== undefined);
+
+    if (parts.length > 0) {
+      data.fullName = parts.join(' ');
+    }
+  }
+
+  return data;
 }
 
 @Injectable()
@@ -194,6 +285,76 @@ export class WebhooksService {
     // the retry endpoint is what the database actually holds, so a round-trip
     // problem shows up on the first delivery instead of days later.
     return this.processStoredEvent(event.id, eventId, source, event.payload);
+  }
+
+  /**
+   * The GoHighLevel path: a flat body, authenticated by bearer token.
+   *
+   * GHL workflows can only send static values and merge fields, so they cannot
+   * compute the HMAC signature the main endpoint requires. The token is checked
+   * by the guard before this runs; everything after normalisation is the same
+   * pipeline as a signed delivery, so a GHL registration is stored, retried and
+   * audited identically.
+   */
+  async handleGhlRegistration(body: unknown): Promise<WebhookAckDto> {
+    const raw = asPlainObject(body);
+    const data = normaliseGhlContact(raw);
+
+    const contactId = typeof data.contactId === 'string' ? data.contactId : '';
+
+    // GHL cannot mint a per-request id, but `{{contact.id}}` is stable for the
+    // life of the contact — which is exactly the idempotency key needed here: a
+    // workflow retry carries the same contact and must not create a second user.
+    const eventId = contactId
+      ? `ghl:${contactId}`
+      : `ghl-missing-contact-id:${randomUUID()}`;
+
+    // `data` is the canonical envelope so the stored payload validates against
+    // the same DTO and replays through the same retry endpoint. `raw` is the
+    // untouched body: without it, diagnosing a GHL payload shape we did not
+    // anticipate means asking the client to reproduce it. The DTO whitelists,
+    // so the extra key is dropped at validation rather than rejected.
+    const payload = {
+      event: USER_REGISTRATION_EVENT,
+      data,
+      raw,
+    } as Prisma.InputJsonValue;
+
+    if (contactId) {
+      const existing = await this.repository.findEventByEventId(eventId);
+
+      if (existing) {
+        this.logger.log(`Duplicate GHL contact ${eventId}; ignoring.`);
+
+        return { eventId, status: 'DUPLICATE', userId: existing.user?.id };
+      }
+    }
+
+    const event = await this.repository.createEvent({
+      eventId,
+      source: GHL_SOURCE,
+      type: USER_REGISTRATION_EVENT,
+      payload,
+      headers: {},
+    });
+
+    // Stored first, then refused: without a contact id there is no idempotency
+    // key, so every workflow retry would create another user. The event is kept
+    // so an operator can see exactly what the workflow sent.
+    if (!contactId) {
+      return this.fail(
+        event.id,
+        eventId,
+        'Missing contactId — map {{contact.id}} in the GoHighLevel workflow',
+      );
+    }
+
+    return this.processStoredEvent(
+      event.id,
+      eventId,
+      GHL_SOURCE,
+      event.payload,
+    );
   }
 
   /**

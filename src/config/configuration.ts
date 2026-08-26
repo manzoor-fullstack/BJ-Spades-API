@@ -24,6 +24,11 @@ export default () => ({
     secret: process.env.WEBHOOK_SECRET,
   },
 
+  ghl: {
+    /** Static bearer token for the GoHighLevel endpoint; empty disables it. */
+    webhookToken: process.env.GHL_WEBHOOK_TOKEN,
+  },
+
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,
 

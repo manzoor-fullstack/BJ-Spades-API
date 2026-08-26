@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -8,6 +9,7 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -25,6 +27,7 @@ import { Public } from '../auth/decorators/public.decorator';
 
 import { WebhookAckDto } from './dto/webhook-ack.dto';
 import { WebhookEventsQueryDto } from './dto/webhook-events-query.dto';
+import { GhlTokenGuard } from './guards/ghl-token.guard';
 import type { RawBodyRequest } from './webhook-raw-body';
 import { WebhooksService, type WebhookEventsPage } from './webhooks.service';
 
@@ -64,6 +67,31 @@ export class WebhooksController {
       rawBody: request.rawBody,
       headers: request.headers,
     });
+  }
+
+  /**
+   * The GoHighLevel path: a flat body, authenticated by a static bearer token.
+   *
+   * GHL workflows send only static values and merge fields, so they cannot
+   * compute the per-request HMAC the endpoint above requires. Everything after
+   * authentication is the same pipeline, and the outcomes match: 200 for
+   * PROCESSED, DUPLICATE and FAILED alike; 401 only for a bad token.
+   */
+  @Public()
+  @UseGuards(GhlTokenGuard)
+  @Throttle({
+    default: { limit: WEBHOOK_RATE_LIMIT, ttl: WEBHOOK_RATE_TTL_MS },
+  })
+  @HttpCode(HttpStatus.OK)
+  @Post('ghl/user-registration')
+  @ApiOperation({ summary: 'Register a user from a GoHighLevel workflow.' })
+  @ApiOkResponse({ type: WebhookAckDto })
+  @ApiUnauthorizedResponse({ description: 'Bearer token missing or invalid.' })
+  handleGhlRegistration(@Body() body: unknown): Promise<WebhookAckDto> {
+    // Typed `unknown` deliberately: the global ValidationPipe has no DTO to
+    // bind here, and the service must see exactly what the workflow sent so an
+    // unmapped merge field is recorded rather than silently dropped.
+    return this.webhooksService.handleGhlRegistration(body);
   }
 
   @ApiBearerAuth('access-token')

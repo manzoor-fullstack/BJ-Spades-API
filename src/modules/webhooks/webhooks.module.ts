@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { GhlTokenGuard } from './guards/ghl-token.guard';
 import { WebhooksRepository } from './repositories/webhooks.repository';
 import { SignatureService } from './services/signature.service';
 import { WebhooksController } from './webhooks.controller';
@@ -15,7 +16,12 @@ import { WebhooksService } from './webhooks.service';
 @Module({
   controllers: [WebhooksController],
 
-  providers: [WebhooksService, WebhooksRepository, SignatureService],
+  providers: [
+    WebhooksService,
+    WebhooksRepository,
+    SignatureService,
+    GhlTokenGuard,
+  ],
 
   exports: [SignatureService],
 })

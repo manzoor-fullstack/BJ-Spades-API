@@ -28,6 +28,10 @@ export const envValidationSchema = Joi.object({
 
   WEBHOOK_SECRET: Joi.string().min(16).required(),
 
+  // Optional so existing deployments keep booting. Empty leaves the
+  // GoHighLevel endpoint refusing every request — GhlTokenGuard fails closed.
+  GHL_WEBHOOK_TOKEN: Joi.string().allow('').min(16),
+
   CLOUDINARY_CLOUD_NAME: Joi.string().allow(''),
 
   CLOUDINARY_API_KEY: Joi.string().allow(''),
