@@ -98,7 +98,7 @@ describe('GoHighLevel registration webhook (integration)', () => {
   });
 
   describe('successful registration', () => {
-    it('creates a PENDING webhook-sourced user and returns 200', async () => {
+    it('creates an ACTIVE webhook-sourced user and returns 200', async () => {
       const response = await send(contact()).expect(200);
 
       const body = response.body as AckBody;
@@ -113,7 +113,7 @@ describe('GoHighLevel registration webhook (integration)', () => {
       });
 
       expect(user.source).toBe('WEBHOOK');
-      expect(user.status).toBe('PENDING');
+      expect(user.status).toBe('ACTIVE');
       expect(user.tier).toBe('PREMIUM');
       expect(user.firstName).toBe('Ali');
       expect(user.lastName).toBe('Raza');

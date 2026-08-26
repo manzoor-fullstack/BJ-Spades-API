@@ -166,7 +166,7 @@ describe('Webhooks (integration)', () => {
   });
 
   describe('POST /webhooks/user-registration', () => {
-    it('creates a PENDING webhook-sourced user and returns 200', async () => {
+    it('creates an ACTIVE webhook-sourced user and returns 200', async () => {
       const eventId = `evt_${randomUUID()}`;
       const rawBody = bodyFor();
 
@@ -185,7 +185,7 @@ describe('Webhooks (integration)', () => {
       });
 
       expect(user.source).toBe('WEBHOOK');
-      expect(user.status).toBe('PENDING');
+      expect(user.status).toBe('ACTIVE');
       expect(user.tier).toBe('PREMIUM');
       expect(user.firstName).toBe('David');
       expect(user.lastName).toBe('Kim');
@@ -237,7 +237,7 @@ describe('Webhooks (integration)', () => {
 
       expect(user.tier).toBe('VIP');
       expect(user.source).toBe('WEBHOOK');
-      expect(user.status).toBe('PENDING');
+      expect(user.status).toBe('ACTIVE');
     });
 
     it('treats the same event id as a duplicate and creates exactly one user', async () => {

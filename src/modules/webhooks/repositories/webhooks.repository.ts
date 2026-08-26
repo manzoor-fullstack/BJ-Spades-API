@@ -163,11 +163,17 @@ export class WebhooksRepository {
           postalCode: input.postalCode,
           country: input.country,
 
-          // Anyone on the internet can post this form, so a webhook user lands
-          // in PENDING: visible in the dashboard immediately, but activated
-          // only by an admin. See WEBHOOK-CONTRACT.md.
+          // ACTIVE on arrival, at the client's request (2026-08-26). This was
+          // PENDING so an admin had to activate each registration by hand; the
+          // client wants signups usable immediately.
+          //
+          // Nothing in the API gates on PENDING — it is a dashboard label, not
+          // a capability check — so the change costs no enforcement. What it
+          // costs is the signal: a spam registration now looks like any other
+          // active user instead of sitting in a queue. `source: WEBHOOK` is
+          // still the way to tell them apart.
           source: UserSource.WEBHOOK,
-          status: UserStatus.PENDING,
+          status: UserStatus.ACTIVE,
 
           webhookEvent: { connect: { id: input.webhookEventId } },
         },
