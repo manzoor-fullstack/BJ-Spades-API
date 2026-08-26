@@ -42,6 +42,8 @@ example, because the defaults are either local-only or empty:
 | `JWT_ACCESS_SECRET` | `openssl rand -hex 32` |
 | `JWT_REFRESH_SECRET` | `openssl rand -hex 32` — **must differ** from the access secret |
 | `WEBHOOK_SECRET` | `openssl rand -hex 32` — required, min 16 chars. Easy to miss: it is not optional, and the process refuses to boot without it |
+| `GHL_WEBHOOK_TOKEN` | `openssl rand -hex 32` — the bearer token for `/api/webhooks/ghl/user-registration`. Optional: left empty, that endpoint refuses every request rather than opening |
+| `GHL_WEBHOOK_AUTH_DISABLED` | `false`. Setting `true` turns the bearer check off and leaves that endpoint open to anyone who knows the URL — a temporary onboarding hatch, never a resting state. Every admitted request logs a warning |
 | `ACCESS_TOKEN_EXPIRES` / `REFRESH_TOKEN_EXPIRES` | `15m` / `7d` — both required, no defaults |
 | `UPLOAD_DIR` | `/app/uploads` (matches the volume in the compose file) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | used by the `db` service; the first two must match `DATABASE_URL` |

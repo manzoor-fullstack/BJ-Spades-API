@@ -172,6 +172,11 @@ export class WebhooksRepository {
           // costs is the signal: a spam registration now looks like any other
           // active user instead of sitting in a queue. `source: WEBHOOK` is
           // still the way to tell them apart.
+          //
+          // Written explicitly rather than left to the schema default, which is
+          // also ACTIVE: the two agreeing today is a coincidence, and a silent
+          // dependency on it would make a future default change move webhook
+          // registrations without anyone deciding to.
           source: UserSource.WEBHOOK,
           status: UserStatus.ACTIVE,
 
