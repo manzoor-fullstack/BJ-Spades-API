@@ -27,6 +27,12 @@ export default () => ({
   ghl: {
     /** Static bearer token for the GoHighLevel endpoint; empty disables it. */
     webhookToken: process.env.GHL_WEBHOOK_TOKEN,
+
+    /**
+     * Turns the bearer check off entirely, leaving the endpoint open to anyone
+     * who knows the URL. Temporary escape hatch only — see GhlTokenGuard.
+     */
+    authDisabled: process.env.GHL_WEBHOOK_AUTH_DISABLED === 'true',
   },
 
   cloudinary: {

@@ -32,6 +32,14 @@ export const envValidationSchema = Joi.object({
   // GoHighLevel endpoint refusing every request — GhlTokenGuard fails closed.
   GHL_WEBHOOK_TOKEN: Joi.string().allow('').min(16),
 
+  // Leaves the GoHighLevel endpoint open to anyone who knows the URL.
+  // Validated rather than read loosely so a typo in the VALUE fails at boot:
+  // silently staying protected is the wrong answer when an operator has
+  // deliberately asked for the check to be off.
+  GHL_WEBHOOK_AUTH_DISABLED: Joi.string()
+    .valid('true', 'false')
+    .default('false'),
+
   CLOUDINARY_CLOUD_NAME: Joi.string().allow(''),
 
   CLOUDINARY_API_KEY: Joi.string().allow(''),

@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -27,12 +28,29 @@ const BEARER_PREFIX = 'Bearer ';
  *
  * Throws rather than returning false: Nest turns a `false` into 403, and the
  * contract for a rejected webhook is 401.
+ *
+ * `GHL_WEBHOOK_AUTH_DISABLED=true` switches the check off entirely — an escape
+ * hatch for the window where a sender cannot be made to send the header at all.
+ * It is an env flag rather than a code change so turning auth back on is a
+ * restart rather than a redeploy, and every admitted request is logged as a
+ * warning: an endpoint that creates users must not sit open quietly.
  */
 @Injectable()
 export class GhlTokenGuard implements CanActivate {
+  private readonly logger = new Logger(GhlTokenGuard.name);
+
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
+    if (this.config.get<boolean>('ghl.authDisabled')) {
+      this.logger.warn(
+        'GHL webhook auth is DISABLED — admitting an unauthenticated request. ' +
+          'Unset GHL_WEBHOOK_AUTH_DISABLED to close this.',
+      );
+
+      return true;
+    }
+
     const configured = this.config.get<string>('ghl.webhookToken');
 
     // Fails closed. The variable is optional at boot so existing deployments

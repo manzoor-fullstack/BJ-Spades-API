@@ -14,9 +14,17 @@ function contextWith(headers: Record<string, string>): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
-function guardWith(configured: string | undefined): GhlTokenGuard {
+function guardWith(
+  configured: string | undefined,
+  authDisabled = false,
+): GhlTokenGuard {
+  const values: Record<string, unknown> = {
+    'ghl.webhookToken': configured,
+    'ghl.authDisabled': authDisabled,
+  };
+
   const config = {
-    get: jest.fn(() => configured),
+    get: jest.fn((key: string) => values[key]),
   } as unknown as ConfigService;
 
   return new GhlTokenGuard(config);
@@ -53,6 +61,35 @@ describe('GhlTokenGuard', () => {
     expect(() =>
       guard.canActivate(contextWith({ authorization: TOKEN })),
     ).toThrow(UnauthorizedException);
+  });
+
+  /**
+   * An escape hatch for the window where the sender cannot be made to send the
+   * header at all. It is an env flag rather than a code change so turning auth
+   * back on is a restart, not a redeploy — and every admitted request is logged
+   * as a warning, because an endpoint that creates users must not sit open
+   * quietly.
+   */
+  describe('when auth is explicitly disabled', () => {
+    it('admits a request with no Authorization header', () => {
+      const guard = guardWith(TOKEN, true);
+
+      expect(guard.canActivate(contextWith({}))).toBe(true);
+    });
+
+    it('admits a request carrying a wrong token', () => {
+      const guard = guardWith(TOKEN, true);
+
+      expect(
+        guard.canActivate(contextWith({ authorization: 'Bearer nonsense' })),
+      ).toBe(true);
+    });
+
+    it('admits even when no token is configured either', () => {
+      const guard = guardWith('', true);
+
+      expect(guard.canActivate(contextWith({}))).toBe(true);
+    });
   });
 
   it('rejects every request when no token is configured', () => {
