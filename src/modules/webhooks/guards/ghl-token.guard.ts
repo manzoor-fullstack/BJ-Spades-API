@@ -13,7 +13,43 @@ import {
   safeCompareHex,
 } from '../../../common/crypto/token-hash.util';
 
-const BEARER_PREFIX = 'Bearer ';
+/**
+ * `Bearer <token>`, with the scheme matched case-insensitively.
+ *
+ * RFC 7235 makes the scheme case-insensitive and senders take that literally.
+ * Matching only the exact string `Bearer ` turned a spec-valid `bearer <token>`
+ * into a 401 that read as a wrong token — the worst kind of wrong answer,
+ * because it sends the integrator looking at the value instead of the case.
+ */
+const BEARER_PATTERN = /^Bearer[ \t]+(\S.*)$/i;
+
+/**
+ * Fallback header, for senders that reserve `Authorization` for their own auth
+ * configuration and drop or overwrite anything placed there.
+ */
+const TOKEN_HEADER = 'x-bjs-token';
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value;
+
+  return first?.trim() || undefined;
+}
+
+/** The presented token, or undefined when no recognisable one was sent. */
+function extractToken(request: Request): string | undefined {
+  const authorization = headerValue(request.headers.authorization);
+
+  if (authorization !== undefined) {
+    const match = BEARER_PATTERN.exec(authorization);
+
+    // A present-but-unparseable Authorization is treated as absent rather than
+    // falling through to the other header: mixing the two would let a
+    // malformed value be silently rescued and hide the real mistake.
+    return match?.[1]?.trim() || undefined;
+  }
+
+  return headerValue(request.headers[TOKEN_HEADER]);
+}
 
 /**
  * Static bearer-token auth for the GoHighLevel registration endpoint.
@@ -61,13 +97,11 @@ export class GhlTokenGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const header = request.headers.authorization;
+    const provided = extractToken(request);
 
-    if (!header?.startsWith(BEARER_PREFIX)) {
+    if (provided === undefined) {
       throw new UnauthorizedException('Missing bearer token.');
     }
-
-    const provided = header.slice(BEARER_PREFIX.length).trim();
 
     // Digests, not the raw strings: safeCompareHex needs hex of equal length,
     // and hashing first makes it work for any token format while giving away

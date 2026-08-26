@@ -31,6 +31,41 @@ function guardWith(
 }
 
 describe('GhlTokenGuard', () => {
+  /**
+   * RFC 7235 makes the auth scheme case-insensitive, and senders take that
+   * literally — GoHighLevel among them. Rejecting `bearer` produced a 401 that
+   * looked like a wrong token and cost an afternoon.
+   */
+  it.each(['Bearer', 'bearer', 'BEARER', 'BeArEr'])(
+    'admits the configured token behind a `%s` scheme',
+    (scheme) => {
+      const guard = guardWith(TOKEN);
+
+      expect(
+        guard.canActivate(contextWith({ authorization: `${scheme} ${TOKEN}` })),
+      ).toBe(true);
+    },
+  );
+
+  /**
+   * Some senders reserve `Authorization` for their own auth config and drop or
+   * overwrite anything put there. This is the way out that does not need them
+   * to change platforms.
+   */
+  it('admits the token supplied in X-BJS-Token instead', () => {
+    const guard = guardWith(TOKEN);
+
+    expect(guard.canActivate(contextWith({ 'x-bjs-token': TOKEN }))).toBe(true);
+  });
+
+  it('rejects a wrong token in X-BJS-Token', () => {
+    const guard = guardWith(TOKEN);
+
+    expect(() =>
+      guard.canActivate(contextWith({ 'x-bjs-token': 'nonsense' })),
+    ).toThrow(UnauthorizedException);
+  });
+
   it('admits a request carrying the configured token', () => {
     const guard = guardWith(TOKEN);
 
