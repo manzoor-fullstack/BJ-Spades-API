@@ -383,9 +383,21 @@ export class TournamentsService {
       );
     }
 
-    await this.repository.deleteRegistration(id, userId);
+    const result = await this.repository.withdrawRegistration(id, userId);
 
-    return toRegistrationItem(registration);
+    if (result.outcome === 'NOT_FOUND') {
+      throw new NotFoundException(
+        `User ${userId} is not registered for tournament ${id}`,
+      );
+    }
+
+    if (result.outcome === 'COMPLETED') {
+      throw new UnprocessableEntityException(
+        'Players cannot be removed from a completed tournament.',
+      );
+    }
+
+    return toRegistrationItem(result.registration);
   }
 
   async submitResults(
@@ -439,7 +451,19 @@ export class TournamentsService {
     // the registration. Balances are still untouched — submitting results
     // records what is *owed*; the money moves in `POST /payouts/:id/process`,
     // after an admin approves it and Stripe accepts the transfer.
-    return toTournamentDetail(await this.repository.submitResults(id, rows));
+    const result = await this.repository.submitResults(id, rows);
+
+    if (result.outcome === 'NOT_FOUND') {
+      throw new NotFoundException(`Tournament ${id} not found`);
+    }
+
+    if (result.outcome === 'INVALID_STATUS') {
+      throw new UnprocessableEntityException(
+        `Results cannot be submitted while the tournament is ${result.status}.`,
+      );
+    }
+
+    return toTournamentDetail(result.tournament);
   }
 
   private buildListArgs(query: QueryTournamentsDto): ListTournamentsArgs {

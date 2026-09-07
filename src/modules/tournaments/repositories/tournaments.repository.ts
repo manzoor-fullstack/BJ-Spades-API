@@ -21,7 +21,17 @@ import { recordLedgerEntry } from '../../transactions/repositories/transactions.
  */
 const TOURNAMENT_INCLUDE = {
   image: true,
-  _count: { select: { registrations: true } },
+  _count: {
+    select: {
+      registrations: {
+        where: {
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+      },
+    },
+  },
 } satisfies Prisma.TournamentInclude;
 
 export type TournamentWithRelations = Prisma.TournamentGetPayload<{
@@ -97,6 +107,11 @@ export interface ResultRow {
   prizeWon: Money | null;
 }
 
+export type SubmitResultsOutcome =
+  | { outcome: 'COMPLETED'; tournament: TournamentWithRelations }
+  | { outcome: 'NOT_FOUND' }
+  | { outcome: 'INVALID_STATUS'; status: TournamentStatus };
+
 /**
  * Every way the transactional registration attempt can end.
  *
@@ -112,6 +127,11 @@ export type RegistrationOutcome =
   | { outcome: 'FULL'; registeredCount: number; maxPlayers: number }
   | { outcome: 'ALREADY_REGISTERED' }
   | { outcome: 'INSUFFICIENT_BALANCE'; balance: Money; entryFee: Money };
+
+export type WithdrawalOutcome =
+  | { outcome: 'WITHDRAWN'; registration: RegistrationWithUser }
+  | { outcome: 'NOT_FOUND' }
+  | { outcome: 'COMPLETED' };
 
 /** Shape of the locked row read back by the raw SELECT below. */
 interface LockedTournamentRow {
@@ -134,12 +154,19 @@ interface LockedTournamentRow {
 export function entryFeeReference(
   tournamentId: string,
   userId: string,
+  attempt = 1,
 ): string {
-  return `entry_fee:${tournamentId}:${userId}`;
+  const base = `entry_fee:${tournamentId}:${userId}`;
+  return attempt === 1 ? base : `${base}:${attempt}`;
 }
 
-export function refundReference(tournamentId: string, userId: string): string {
-  return `refund:${tournamentId}:${userId}`;
+export function refundReference(
+  tournamentId: string,
+  userId: string,
+  attempt = 1,
+): string {
+  const base = `refund:${tournamentId}:${userId}`;
+  return attempt === 1 ? base : `${base}:${attempt}`;
 }
 
 @Injectable()
@@ -233,7 +260,12 @@ export class TournamentsRepository {
 
   countAllRegistrations(): Promise<number> {
     return this.prisma.tournamentRegistration.count({
-      where: { tournament: { status: { not: TournamentStatus.CANCELLED } } },
+      where: {
+        tournament: { status: { not: TournamentStatus.CANCELLED } },
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
     });
   }
 
@@ -243,7 +275,12 @@ export class TournamentsRepository {
     take: number,
   ): Promise<RegistrationWithUser[]> {
     return this.prisma.tournamentRegistration.findMany({
-      where: { tournamentId },
+      where: {
+        tournamentId,
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
       include: REGISTRATION_INCLUDE,
       orderBy: [
         { placement: { sort: 'asc', nulls: 'last' } },
@@ -256,7 +293,12 @@ export class TournamentsRepository {
 
   countRegistrations(tournamentId: string): Promise<number> {
     return this.prisma.tournamentRegistration.count({
-      where: { tournamentId },
+      where: {
+        tournamentId,
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
     });
   }
 
@@ -317,7 +359,12 @@ export class TournamentsRepository {
       }
 
       const registeredCount = await tx.tournamentRegistration.count({
-        where: { tournamentId },
+        where: {
+          tournamentId,
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
       });
 
       if (registeredCount >= tournament.maxPlayers) {
@@ -330,12 +377,14 @@ export class TournamentsRepository {
 
       const existing = await tx.tournamentRegistration.findUnique({
         where: { tournamentId_userId: { tournamentId, userId } },
-        select: { id: true },
+        select: { id: true, status: true, entryAttempt: true },
       });
 
-      if (existing) {
+      if (existing && existing.status !== RegistrationStatus.WITHDRAWN) {
         return { outcome: 'ALREADY_REGISTERED' };
       }
+
+      const attempt = existing ? existing.entryAttempt + 1 : 1;
 
       const entryFee = toMoney(tournament.entryFee);
 
@@ -346,7 +395,7 @@ export class TournamentsRepository {
           // Signed: a fee is a debit.
           amount: entryFee.negated(),
           description: 'Tournament entry fee',
-          reference: entryFeeReference(tournamentId, userId),
+          reference: entryFeeReference(tournamentId, userId, attempt),
           tournamentId,
         });
 
@@ -363,25 +412,107 @@ export class TournamentsRepository {
         }
       }
 
-      const registration = await tx.tournamentRegistration.create({
-        data: {
-          tournamentId,
-          userId,
-          status: RegistrationStatus.REGISTERED,
-        },
-        include: REGISTRATION_INCLUDE,
-      });
+      const registration = existing
+        ? await tx.tournamentRegistration.update({
+            where: { id: existing.id },
+            data: {
+              status: RegistrationStatus.REGISTERED,
+              entryAttempt: attempt,
+              registeredAt: new Date(),
+              placement: null,
+              prizeWon: null,
+              payoutId: null,
+            },
+            include: REGISTRATION_INCLUDE,
+          })
+        : await tx.tournamentRegistration.create({
+            data: {
+              tournamentId,
+              userId,
+              status: RegistrationStatus.REGISTERED,
+              entryAttempt: attempt,
+            },
+            include: REGISTRATION_INCLUDE,
+          });
 
       return { outcome: 'CREATED', registration };
     });
   }
 
-  async deleteRegistration(
+  async withdrawRegistration(
     tournamentId: string,
     userId: string,
-  ): Promise<void> {
-    await this.prisma.tournamentRegistration.delete({
-      where: { tournamentId_userId: { tournamentId, userId } },
+  ): Promise<WithdrawalOutcome> {
+    return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<LockedTournamentRow[]>`
+        SELECT "status", "maxPlayers", "entryFee"
+        FROM "Tournament"
+        WHERE "id" = ${tournamentId}
+        FOR UPDATE
+      `;
+      if (!locked[0]) return { outcome: 'NOT_FOUND' };
+      if (locked[0].status === TournamentStatus.COMPLETED) {
+        return { outcome: 'COMPLETED' };
+      }
+
+      const registration = await tx.tournamentRegistration.findUnique({
+        where: { tournamentId_userId: { tournamentId, userId } },
+        include: REGISTRATION_INCLUDE,
+      });
+
+      if (!registration) return { outcome: 'NOT_FOUND' };
+
+      if (registration.status === RegistrationStatus.WITHDRAWN) {
+        return { outcome: 'WITHDRAWN', registration };
+      }
+
+      const feeReference = entryFeeReference(
+        tournamentId,
+        userId,
+        registration.entryAttempt,
+      );
+      const refund = refundReference(
+        tournamentId,
+        userId,
+        registration.entryAttempt,
+      );
+      const fee = await tx.transaction.findUnique({
+        where: { reference: feeReference },
+        select: { amount: true },
+      });
+
+      if (fee) {
+        const alreadyRefunded = await tx.transaction.findUnique({
+          where: { reference: refund },
+          select: { id: true },
+        });
+
+        if (!alreadyRefunded) {
+          const outcome = await recordLedgerEntry(tx, {
+            userId,
+            type: TransactionType.REFUND,
+            amount: toMoney(fee.amount).negated(),
+            description:
+              'Tournament entry fee refunded — registration withdrawn',
+            reference: refund,
+            tournamentId,
+          });
+
+          if (outcome.outcome !== 'RECORDED') {
+            throw new Error(
+              `Failed to refund registration: ${outcome.outcome}`,
+            );
+          }
+        }
+      }
+
+      const withdrawn = await tx.tournamentRegistration.update({
+        where: { id: registration.id },
+        data: { status: RegistrationStatus.WITHDRAWN },
+        include: REGISTRATION_INCLUDE,
+      });
+
+      return { outcome: 'WITHDRAWN', registration: withdrawn };
     });
   }
 
@@ -403,8 +534,20 @@ export class TournamentsRepository {
   async submitResults(
     tournamentId: string,
     results: ResultRow[],
-  ): Promise<TournamentWithRelations> {
+  ): Promise<SubmitResultsOutcome> {
     return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<LockedTournamentRow[]>`
+        SELECT "status", "maxPlayers", "entryFee"
+        FROM "Tournament"
+        WHERE "id" = ${tournamentId}
+        FOR UPDATE
+      `;
+      const tournament = locked[0];
+      if (!tournament) return { outcome: 'NOT_FOUND' };
+      if (tournament.status !== TournamentStatus.IN_PROGRESS) {
+        return { outcome: 'INVALID_STATUS', status: tournament.status };
+      }
+
       for (const result of results) {
         const prize = result.prizeWon ? toMoney(result.prizeWon) : null;
 
@@ -420,6 +563,7 @@ export class TournamentsRepository {
                   placement: result.placement,
                   status: PayoutStatus.PENDING,
                   owedSince: new Date(),
+                  tournamentResultKey: `${tournamentId}:${result.userId}`,
                 },
               })
             : null;
@@ -436,11 +580,13 @@ export class TournamentsRepository {
         });
       }
 
-      return tx.tournament.update({
+      const completed = await tx.tournament.update({
         where: { id: tournamentId },
         data: { status: TournamentStatus.COMPLETED },
         include: TOURNAMENT_INCLUDE,
       });
+
+      return { outcome: 'COMPLETED', tournament: completed };
     });
   }
 
@@ -463,11 +609,12 @@ export class TournamentsRepository {
     return this.prisma.$transaction(async (tx) => {
       const fees = await tx.transaction.findMany({
         where: { tournamentId, type: TransactionType.ENTRY_FEE },
-        select: { userId: true, amount: true },
+        select: { userId: true, amount: true, reference: true },
       });
 
       for (const fee of fees) {
-        const reference = refundReference(tournamentId, fee.userId);
+        if (!fee.reference) continue;
+        const reference = fee.reference.replace(/^entry_fee:/, 'refund:');
 
         const alreadyRefunded = await tx.transaction.findUnique({
           where: { reference },
@@ -496,6 +643,16 @@ export class TournamentsRepository {
           );
         }
       }
+
+      await tx.tournamentRegistration.updateMany({
+        where: {
+          tournamentId,
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+        data: { status: RegistrationStatus.WITHDRAWN },
+      });
 
       return tx.tournament.update({
         where: { id: tournamentId },

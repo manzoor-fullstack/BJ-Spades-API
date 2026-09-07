@@ -64,7 +64,10 @@ function roleLabel(result: unknown): string {
 export class AdminsController {
   constructor(private readonly adminsService: AdminsService) {}
 
-  @RequirePermissions(PERMISSION_CODES.ADMINS_MANAGE)
+  @RequirePermissions(
+    PERMISSION_CODES.ADMINS_MANAGE,
+    PERMISSION_CODES.ROLES_MANAGE,
+  )
   @AuditLog({
     category: ActivityCategory.ADMIN,
     action: ACTIVITY_ACTIONS.ADMIN_CREATED.code,
@@ -74,7 +77,10 @@ export class AdminsController {
     entityId: adminId,
   })
   @Post()
-  @ApiOperation({ summary: 'Create an administrator' })
+  @ApiOperation({
+    summary:
+      'Create an administrator (requires admin and role management permissions)',
+  })
   create(@Body() dto: CreateAdminDto) {
     return this.adminsService.create(dto);
   }

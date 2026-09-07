@@ -27,6 +27,17 @@ enum UserTier {
 enum UserSource {
   ADMIN
   WEBHOOK
+  PLAYER
+}
+
+enum PlayerEmailTokenPurpose {
+  VERIFY_EMAIL
+  PASSWORD_RESET
+}
+
+enum PlayerAuthProvider {
+  GOOGLE
+  GITHUB
 }
 
 enum WebhookEventStatus {
@@ -331,23 +342,28 @@ model User {
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
-  registrations  TournamentRegistration[]
-  payouts        Payout[]
-  transactions   Transaction[]
-  securityAlerts SecurityAlert[]
-  prizeClaims    PrizeClaim[]
-  disputes       Dispute[]
-  verification   PlayerVerification?
-  payoutMethods  PayoutMethodAccount[]
-  taxDocuments   TaxDocument[]
-  shipments      Shipment[]
+  registrations     TournamentRegistration[]
+  payouts           Payout[]
+  transactions      Transaction[]
+  securityAlerts    SecurityAlert[]
+  prizeClaims       PrizeClaim[]
+  disputes          Dispute[]
+  verification      PlayerVerification?
+  payoutMethods     PayoutMethodAccount[]
+  taxDocuments      TaxDocument[]
+  shipments         Shipment[]
+  credential        PlayerCredential?
+  playerSessions    PlayerSession[]
+  playerEmailTokens PlayerEmailToken[]
+  oauthAccounts     PlayerOAuthAccount[]
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
   deletedAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  playerRefreshTokens PlayerRefreshToken[]
 
   @@index([status])
   @@index([tier])
@@ -355,6 +371,117 @@ model User {
   @@index([createdAt])
   @@index([deletedAt])
   @@index([email, status])
+}
+
+model PlayerCredential {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  username     String  @unique
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlayerSession {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rememberMe Boolean @default(false)
+  device     String?
+  browser    String?
+  os         String?
+  ipAddress  String?
+  userAgent  String?
+
+  isActive     Boolean   @default(true)
+  lastActivity DateTime  @default(now())
+  revokedAt    DateTime?
+
+  refreshTokens PlayerRefreshToken[]
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, isActive])
+  @@index([expiresAt])
+}
+
+model PlayerRefreshToken {
+  id String @id @default(uuid())
+
+  tokenHash String @unique
+
+  sessionId String
+  session   PlayerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  replacedByTokenId String?
+  createdByIp       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model PlayerEmailToken {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose    PlayerEmailTokenPurpose
+  tokenHash  String                  @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
+}
+
+model PlayerOAuthAccount {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider       PlayerAuthProvider
+  providerUserId String
+  emailAtLink    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model PlayerOAuthState {
+  id String @id @default(uuid())
+
+  stateHash    String             @unique
+  provider     PlayerAuthProvider
+  codeVerifier String
+  rememberMe   Boolean            @default(false)
+  redirectPath String             @default("/")
+  expiresAt    DateTime
+  consumedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 /// Every inbound webhook is recorded before processing begins, so a payload
@@ -455,7 +582,7 @@ model MediaAsset {
   /// Admins using this asset as their profile picture. Separate from
   /// `uploadedByAdmin`: the admin who uploaded a picture is not necessarily
   /// the admin wearing it.
-  avatarOfAdmins    Admin[] @relation("AdminAvatar")
+  avatarOfAdmins Admin[] @relation("AdminAvatar")
 
   tournaments Tournament[]
   rewards     Reward[]
@@ -522,6 +649,11 @@ model TournamentRegistration {
   prizeWon  Decimal? @db.Decimal(18, 2)
 
   registeredAt DateTime @default(now())
+
+  /// Increments whenever a withdrawn player joins again. Ledger references use
+  /// this value so every debit and its matching refund remain individually
+  /// auditable across repeated join/cancel cycles.
+  entryAttempt Int @default(1)
 
   /// Payout associated with this registration
   payout   Payout? @relation(fields: [payoutId], references: [id])
@@ -642,6 +774,10 @@ model Payout {
   tournament   Tournament? @relation(fields: [tournamentId], references: [id])
   placement    Int?
 
+  /// One prize obligation per tournament result. Null for non-tournament
+  /// payouts; unique when results create it, preventing concurrent duplicates.
+  tournamentResultKey String? @unique
+
   stripeTransferId String? @unique
   failureReason    String?
   blockerReason    String? // "KYC incomplete", "Wallet unverified"
@@ -684,6 +820,10 @@ model Transaction {
   amount        Decimal @db.Decimal(18, 2) // signed: negative = debit
   balanceBefore Decimal @db.Decimal(18, 2)
   balanceAfter  Decimal @db.Decimal(18, 2)
+
+  /// False for an externally settled payment recorded for history only. Such a
+  /// row carries its real amount but must not change or inflate User.balance.
+  affectsBalance Boolean @default(true)
 
   description String?
   reference   String? @unique // external id, e.g. Stripe

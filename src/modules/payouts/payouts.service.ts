@@ -41,7 +41,10 @@ import { QueryPayoutsDto } from './dto/query-payouts.dto';
 import { QueryPrizeDistributionDto } from './dto/query-prize-distribution.dto';
 import { APPROVABLE_FROM, CANCELLABLE_FROM } from './payout-status';
 import { assertPayoutTransition } from './payout-status';
-import { PayoutsRepository } from './repositories/payouts.repository';
+import {
+  PAYOUT_PROCESSING_RECOVERY_MS,
+  PayoutsRepository,
+} from './repositories/payouts.repository';
 import type {
   ListPayoutsArgs,
   PayoutFilter,
@@ -111,6 +114,7 @@ export interface StripeWebhookResult {
   eventId: string;
   type: string;
   handled: boolean;
+  duplicate: boolean;
 }
 
 /** Columns of the History CSV export, in order. */
@@ -418,7 +422,7 @@ export class PayoutsService {
       );
     }
 
-    this.assertProcessable(payout);
+    this.assertProcessable(payout, true);
 
     if (!this.stripe.isConfigured()) {
       // Checked before the claim, so an unconfigured environment never parks a
@@ -637,9 +641,36 @@ export class PayoutsService {
       throw new BadRequestException('Invalid Stripe signature');
     }
 
-    const handled = await this.applyWebhookEvent(event);
+    const claimed = await this.repository.claimStripeWebhook(event);
 
-    return { received: true, eventId: event.id, type: event.type, handled };
+    if (!claimed) {
+      return {
+        received: true,
+        eventId: event.id,
+        type: event.type,
+        handled: false,
+        duplicate: true,
+      };
+    }
+
+    try {
+      const handled = await this.applyWebhookEvent(event);
+      await this.repository.markStripeWebhookProcessed(event.id);
+
+      return {
+        received: true,
+        eventId: event.id,
+        type: event.type,
+        handled,
+        duplicate: false,
+      };
+    } catch (error) {
+      await this.repository.markStripeWebhookFailed(
+        event.id,
+        errorMessage(error),
+      );
+      throw error;
+    }
   }
 
   private async applyWebhookEvent(event: StripeWebhookEvent): Promise<boolean> {
@@ -686,14 +717,14 @@ export class PayoutsService {
           return false;
         }
 
-        await this.repository.markFailed(
-          payout.id,
-          typeof object.failure_message === 'string'
-            ? object.failure_message
-            : 'Stripe reported the transfer as failed',
+        return (
+          (await this.repository.markFailed(
+            payout.id,
+            typeof object.failure_message === 'string'
+              ? object.failure_message
+              : 'Stripe reported the transfer as failed',
+          )) > 0
         );
-
-        return true;
       }
 
       // Confirmation of something already recorded when `process` returned.
@@ -759,7 +790,10 @@ export class PayoutsService {
    * The four guards from PHASE-6.md, "Payout eligibility". All 422 with the
    * specific message, because "cannot process" tells an operator nothing.
    */
-  private assertProcessable(payout: PayoutWithRelations): void {
+  private assertProcessable(
+    payout: PayoutWithRelations,
+    allowStaleRecovery = false,
+  ): void {
     // Checked first, ahead of the status: a PAID payout satisfies both this and
     // the status guard, and "already processed" is the answer that matters.
     if (payout.stripeTransferId || payout.status === PayoutStatus.PAID) {
@@ -778,7 +812,15 @@ export class PayoutsService {
       throw new UnprocessableEntityException(PROCESS_ERRORS.UNSUPPORTED_METHOD);
     }
 
-    if (payout.status !== PayoutStatus.APPROVED) {
+    const staleProcessing =
+      allowStaleRecovery &&
+      payout.status === PayoutStatus.PROCESSING &&
+      payout.stripeTransferId === null &&
+      payout.processedAt !== null &&
+      Date.now() - payout.processedAt.getTime() >=
+        PAYOUT_PROCESSING_RECOVERY_MS;
+
+    if (payout.status !== PayoutStatus.APPROVED && !staleProcessing) {
       throw new UnprocessableEntityException(PROCESS_ERRORS.NOT_APPROVED);
     }
 

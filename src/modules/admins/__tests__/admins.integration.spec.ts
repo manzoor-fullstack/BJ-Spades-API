@@ -270,6 +270,35 @@ describe('Admins & Roles API (integration)', () => {
   };
 
   describe('POST /api/admins', () => {
+    it('requires roles.manage before assigning a role to a new admin', async () => {
+      const actorRole = await seedRole('CREATE_ADMIN_ONLY', [
+        PERMISSION_CODES.ADMINS_MANAGE,
+      ]);
+      const actorEmail = testEmail('creator');
+      await seedAdmin(actorRole.id, { email: actorEmail });
+      const targetRole = await seedRole('CREATE_TARGET', []);
+      const token = await tokenFor({
+        email: actorEmail,
+        password: FIXTURE_PASSWORD,
+      });
+
+      const response = await request(server())
+        .post('/api/admins')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          firstName: 'Blocked',
+          lastName: 'Assignment',
+          email: testEmail('blocked-assignment'),
+          password: FIXTURE_PASSWORD,
+          roleId: targetRole.id,
+        })
+        .expect(403);
+
+      expect(JSON.stringify(response.body)).toContain(
+        PERMISSION_CODES.ROLES_MANAGE,
+      );
+    });
+
     it('creates an admin who can then log in', async () => {
       const token = await adminToken();
       const role = await seedRole('VIEWER', [PERMISSION_CODES.USERS_VIEW]);

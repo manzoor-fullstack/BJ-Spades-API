@@ -90,6 +90,7 @@ function registrationFixture() {
     placement: null,
     prizeWon: null,
     registeredAt: new Date('2026-05-02T00:00:00.000Z'),
+    entryAttempt: 1,
     // Added by the Phase 6 schema: a registration can be linked to its payout.
     payoutId: null,
     user: userFixture(),
@@ -130,7 +131,7 @@ describe('TournamentsService', () => {
       countRegistrations: jest.fn(),
       findRegistration: jest.fn(),
       createRegistration: jest.fn(),
-      deleteRegistration: jest.fn(),
+      withdrawRegistration: jest.fn(),
       submitResults: jest.fn(),
       // Phase 6: cancelling refunds every entry fee in the same transaction
       // as the status change, so `cancel` no longer goes through `update`.
@@ -483,9 +484,12 @@ describe('TournamentsService', () => {
         }),
       );
       repository.findRegistrations.mockResolvedValue([registrationFixture()]);
-      repository.submitResults.mockResolvedValue(
-        tournamentFixture({ status: TournamentStatus.COMPLETED }),
-      );
+      repository.submitResults.mockResolvedValue({
+        outcome: 'COMPLETED',
+        tournament: tournamentFixture({
+          status: TournamentStatus.COMPLETED,
+        }),
+      });
     });
 
     it('records placements and completes the tournament', async () => {

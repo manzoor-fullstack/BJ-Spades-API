@@ -8,3 +8,10 @@ allowBuilds:
   # Native image codecs. Without the build step sharp cannot decode or resize,
   # so uploads would fail at runtime rather than at install time.
   sharp: true
+
+overrides:
+  deepmerge-ts: 8.0.0
+  fast-uri: 3.1.6
+  js-yaml@>=5.0.0: 5.2.2
+  mysql2: 3.23.1
+  qs: 6.16.0

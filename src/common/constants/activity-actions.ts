@@ -371,6 +371,30 @@ export const ACTIVITY_ACTIONS = {
     title: 'Stripe account status updated',
     isHighPriority: true,
   },
+  PAYOUT_METHOD_CONNECTED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'payout.method_connected',
+    title: 'Payout destination connected',
+    isHighPriority: true,
+  },
+  PAYOUT_METHOD_DEFAULTED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'payout.method_defaulted',
+    title: 'Default payout destination changed',
+    isHighPriority: true,
+  },
+  PAYOUT_METHOD_VERIFIED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'payout.method_verified',
+    title: 'Payout destination verified',
+    isHighPriority: true,
+  },
+  PAYOUT_METHOD_DISCONNECTED: {
+    category: ActivityCategory.PAYOUT,
+    code: 'payout.method_disconnected',
+    title: 'Payout destination disconnected',
+    isHighPriority: true,
+  },
 
   /**
    * A ledger write made through TransactionsService rather than through
@@ -415,6 +439,12 @@ export const ACTIVITY_ACTIONS = {
     category: ActivityCategory.WEBHOOK,
     code: 'webhook.failed',
     title: 'Webhook processing failed',
+    isHighPriority: true,
+  },
+  WEBHOOK_RETRIED: {
+    category: ActivityCategory.WEBHOOK,
+    code: 'webhook.retried',
+    title: 'Webhook event retried',
     isHighPriority: true,
   },
 } as const satisfies Record<string, ActivityActionDefinition>;

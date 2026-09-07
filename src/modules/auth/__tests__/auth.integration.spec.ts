@@ -246,6 +246,13 @@ describe('Auth (integration)', () => {
 
       const next = (rotated.body as { data: Tokens }).data;
 
+      // Move outside the short concurrent-request grace window. A recent
+      // duplicate is rejected without killing the request that won rotation.
+      await testPrisma.refreshToken.updateMany({
+        where: { replacedByTokenId: { not: null } },
+        data: { revokedAt: new Date(Date.now() - 10_000) },
+      });
+
       // Replay the superseded token — the theft signal.
       await request(server())
         .post('/api/auth/refresh')
@@ -269,6 +276,34 @@ describe('Auth (integration)', () => {
 
       expect(session?.revokedAt).toBeTruthy();
       expect(session?.isActive).toBe(false);
+    });
+
+    it('allows only one successor when the same token refreshes concurrently', async () => {
+      const { tokens } = await login();
+
+      const responses = await Promise.all([
+        request(server())
+          .post('/api/auth/refresh')
+          .send({ refreshToken: tokens.refreshToken }),
+        request(server())
+          .post('/api/auth/refresh')
+          .send({ refreshToken: tokens.refreshToken }),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 401,
+      ]);
+
+      const winner = responses.find((response) => response.status === 200);
+      const next = (winner?.body as { data?: Tokens }).data;
+      expect(next?.refreshToken).toBeTruthy();
+
+      await request(server())
+        .post('/api/auth/refresh')
+        .send({ refreshToken: next?.refreshToken })
+        .expect(200);
+
+      expect(await testPrisma.refreshToken.count()).toBe(3);
     });
 
     it('rejects a syntactically invalid token with 400', async () => {

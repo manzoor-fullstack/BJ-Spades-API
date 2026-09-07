@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { INestApplication } from '@nestjs/common';
 import {
   Prisma,
+  RegistrationStatus,
   TournamentStatus,
   UserSource,
   UserStatus,
@@ -111,6 +112,14 @@ async function seedUser(
   };
 
   return testPrisma.user.create({ data });
+}
+
+async function balanceOf(userId: string): Promise<string> {
+  const user = await testPrisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { balance: true },
+  });
+  return user.balance.toFixed(2);
 }
 
 async function seedTournament(
@@ -731,7 +740,7 @@ describe('Tournaments API (integration)', () => {
       );
     });
 
-    it('removes a registered player', async () => {
+    it('withdraws a registered player without erasing the audit record', async () => {
       const token = await adminToken();
 
       const tournament = await seedTournament(seededAdminId, {
@@ -748,11 +757,61 @@ describe('Tournaments API (integration)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(204);
 
+      const stored = await testPrisma.tournamentRegistration.findUniqueOrThrow({
+        where: {
+          tournamentId_userId: {
+            tournamentId: tournament.id,
+            userId: user.id,
+          },
+        },
+      });
+      expect(stored.status).toBe(RegistrationStatus.WITHDRAWN);
+    });
+
+    it('refunds withdrawal and charges exactly once when the player rejoins', async () => {
+      const token = await adminToken();
+      const tournament = await seedTournament(seededAdminId, {
+        status: TournamentStatus.REGISTERING,
+      });
+      const user = await seedUser({ balance: new Prisma.Decimal('100.00') });
+      const registrationPath = `/api/tournaments/${tournament.id}/registrations`;
+
+      await request(server())
+        .post(registrationPath)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ userId: user.id })
+        .expect(201);
+      await expect(balanceOf(user.id)).resolves.toBe('90.00');
+
+      await request(server())
+        .delete(`${registrationPath}/${user.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(204);
+      await expect(balanceOf(user.id)).resolves.toBe('100.00');
+
+      await request(server())
+        .post(registrationPath)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ userId: user.id })
+        .expect(201);
+      await expect(balanceOf(user.id)).resolves.toBe('90.00');
+
+      const registration =
+        await testPrisma.tournamentRegistration.findUniqueOrThrow({
+          where: {
+            tournamentId_userId: {
+              tournamentId: tournament.id,
+              userId: user.id,
+            },
+          },
+        });
+      expect(registration.status).toBe(RegistrationStatus.REGISTERED);
+      expect(registration.entryAttempt).toBe(2);
       await expect(
-        testPrisma.tournamentRegistration.count({
-          where: { tournamentId: tournament.id },
+        testPrisma.transaction.count({
+          where: { tournamentId: tournament.id, userId: user.id },
         }),
-      ).resolves.toBe(0);
+      ).resolves.toBe(3);
     });
 
     it('returns 422 when the tournament is not REGISTERING', async () => {
@@ -855,6 +914,34 @@ describe('Tournaments API (integration)', () => {
   });
 
   describe('POST /api/tournaments/:id/results', () => {
+    it('creates one prize obligation under concurrent result submission', async () => {
+      const token = await adminToken();
+      const tournament = await seedTournament(seededAdminId, {
+        status: TournamentStatus.IN_PROGRESS,
+      });
+      const winner = await seedUser();
+      await testPrisma.tournamentRegistration.create({
+        data: { tournamentId: tournament.id, userId: winner.id },
+      });
+      const send = () =>
+        request(server())
+          .post(`/api/tournaments/${tournament.id}/results`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({
+            results: [{ userId: winner.id, placement: 1, prizeWon: '750.25' }],
+          });
+
+      const responses = await Promise.all([send(), send()]);
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 422,
+      ]);
+      await expect(
+        testPrisma.payout.count({
+          where: { tournamentId: tournament.id, userId: winner.id },
+        }),
+      ).resolves.toBe(1);
+    });
+
     it('records placements and prizes and completes the tournament', async () => {
       const token = await adminToken();
 

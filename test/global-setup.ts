@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import * as dotenv from 'dotenv';
 
 import { acquireTestDbLock } from './db-lock';
+import { assertTestDatabaseUrl } from './test-database-safety';
 
 /**
  * Runs once before the whole integration suite.
@@ -24,21 +25,7 @@ export default async function globalSetup(): Promise<void> {
 
   dotenv.config({ path: envPath, override: true });
 
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL missing from .env.test');
-  }
-
-  // Refuse to run against anything that is not obviously the test database.
-  // Wiping a development or production database because of a stray env var is
-  // a mistake worth making structurally impossible.
-  if (!databaseUrl.includes('bjspades_test')) {
-    throw new Error(
-      `Refusing to run integration tests: DATABASE_URL does not target bjspades_test.\n` +
-        `Got: ${databaseUrl.replace(/:\/\/.*@/, '://***@')}`,
-    );
-  }
+  const databaseUrl = assertTestDatabaseUrl(process.env.DATABASE_URL);
 
   // Before migrating: two concurrent runs must not migrate, seed, or truncate
   // against each other. Blocks until any other run releases.

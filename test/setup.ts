@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import * as dotenv from 'dotenv';
+import { assertTestDatabaseUrl } from './test-database-safety';
 
 dotenv.config({ path: resolve(__dirname, '..', '.env.test'), override: true });
 
@@ -30,7 +31,7 @@ const PRESERVED_TABLES = new Set([
 const DELETE_INSTEAD_OF_TRUNCATE = new Set(['MediaAsset']);
 
 const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: assertTestDatabaseUrl(process.env.DATABASE_URL),
 });
 
 export const testPrisma = new PrismaClient({ adapter });

@@ -433,7 +433,7 @@ describe('Users API (integration)', () => {
       expect(data.suspended).toBe(1);
       expect(data.pending).toBe(1);
       expect(data.newThisMonth).toBe(3);
-      expect(data.bySource).toEqual({ ADMIN: 1, WEBHOOK: 2 });
+      expect(data.bySource).toEqual({ ADMIN: 1, WEBHOOK: 2, PLAYER: 0 });
       expect(data.byTier).toEqual({ PLAYER: 2, PREMIUM: 0, VIP: 1 });
     });
   });

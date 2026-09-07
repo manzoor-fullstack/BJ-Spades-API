@@ -111,11 +111,16 @@ describe('activity action catalogue', () => {
     'payout.failed': 'Payout failed',
     'payout.stripe_onboarding_started': 'Stripe onboarding link generated',
     'payout.stripe_account_updated': 'Stripe account status updated',
+    'payout.method_connected': 'Payout destination connected',
+    'payout.method_defaulted': 'Default payout destination changed',
+    'payout.method_verified': 'Payout destination verified',
+    'payout.method_disconnected': 'Payout destination disconnected',
     'transaction.balance_adjusted': 'Ledger balance adjusted',
     'settings.updated': 'Settings updated',
     'security.session_revoked': 'Session revoked by an administrator',
     'webhook.user_created': 'User registered via webhook',
     'webhook.failed': 'Webhook processing failed',
+    'webhook.retried': 'Webhook event retried',
   };
 
   const HIGH_PRIORITY_CODES = [
@@ -160,6 +165,10 @@ describe('activity action catalogue', () => {
     'payout.failed',
     'payout.stripe_onboarding_started',
     'payout.stripe_account_updated',
+    'payout.method_connected',
+    'payout.method_defaulted',
+    'payout.method_verified',
+    'payout.method_disconnected',
     'transaction.balance_adjusted',
     // A settings change alters how the platform behaves — how long a session
     // lives, how long the audit trail itself is kept. A revocation ends
@@ -167,6 +176,7 @@ describe('activity action catalogue', () => {
     'settings.updated',
     'security.session_revoked',
     'webhook.failed',
+    'webhook.retried',
   ];
 
   /**

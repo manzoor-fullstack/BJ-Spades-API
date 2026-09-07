@@ -24,6 +24,7 @@ function payoutFixture(
     method: 'STRIPE_CONNECT',
     status: PayoutStatus.APPROVED,
     tournamentId: null,
+    tournamentResultKey: null,
     placement: null,
     stripeTransferId: null,
     failureReason: null,

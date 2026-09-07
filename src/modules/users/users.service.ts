@@ -424,6 +424,7 @@ export class UsersService {
       bySource: {
         [UserSource.ADMIN]: countOf(bySource, UserSource.ADMIN),
         [UserSource.WEBHOOK]: countOf(bySource, UserSource.WEBHOOK),
+        [UserSource.PLAYER]: countOf(bySource, UserSource.PLAYER),
       },
       byTier: {
         [UserTier.PLAYER]: countOf(byTier, UserTier.PLAYER),

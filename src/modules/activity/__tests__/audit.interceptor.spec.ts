@@ -133,7 +133,7 @@ describe('AuditInterceptor', () => {
     });
   });
 
-  it('prefers the left-most X-Forwarded-For entry', async () => {
+  it('uses the IP Express resolved instead of trusting the raw forwarded header', async () => {
     const request = requestStub({
       headers: { 'x-forwarded-for': '198.51.100.4, 10.0.0.1' },
     });
@@ -142,7 +142,7 @@ describe('AuditInterceptor', () => {
       interceptor.intercept(executionContext(request), handler()),
     );
 
-    expect(recorded().ipAddress).toBe('198.51.100.4');
+    expect(recorded().ipAddress).toBe('203.0.113.7');
   });
 
   it('leaves adminId null on a route with no authenticated admin', async () => {

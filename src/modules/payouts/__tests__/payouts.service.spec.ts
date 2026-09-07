@@ -82,6 +82,7 @@ function payoutFixture(
     method: PayoutMethod.STRIPE_CONNECT,
     status: PayoutStatus.APPROVED,
     tournamentId: 'tournament-1',
+    tournamentResultKey: null,
     placement: 1,
     stripeTransferId: null,
     failureReason: null,
@@ -241,7 +242,10 @@ describe('PayoutsService', () => {
       setStripeAccount: jest.fn().mockResolvedValue(undefined),
       setStripeStatusByAccountId: jest.fn().mockResolvedValue(1),
       findByStripeTransferId: jest.fn().mockResolvedValue(null),
-      markFailed: jest.fn().mockResolvedValue(undefined),
+      markFailed: jest.fn().mockResolvedValue(1),
+      claimStripeWebhook: jest.fn().mockResolvedValue(true),
+      markStripeWebhookProcessed: jest.fn().mockResolvedValue(undefined),
+      markStripeWebhookFailed: jest.fn().mockResolvedValue(undefined),
       findTransactions: jest.fn().mockResolvedValue([]),
       countPrizeTransactions: jest.fn().mockResolvedValue(0),
       markSettled: jest.fn().mockResolvedValue(1),
@@ -688,6 +692,23 @@ describe('PayoutsService', () => {
   });
 
   describe('process — the transfer', () => {
+    it('resumes a stale PROCESSING payout with the same idempotency key', async () => {
+      repository.findById.mockResolvedValue(
+        payoutFixture({
+          status: PayoutStatus.PROCESSING,
+          processedAt: new Date(Date.now() - 60_000),
+        }),
+      );
+      repository.claimForProcessing.mockResolvedValue({ outcome: 'RESUMED' });
+
+      await service.process(PAYOUT_ID, ADMIN);
+
+      expect(stripe.createTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: `payout_${PAYOUT_ID}` }),
+      );
+      expect(repository.markPaid).toHaveBeenCalledTimes(1);
+    });
+
     it('sends payout_{id} as the idempotency key', async () => {
       await service.process(PAYOUT_ID, ADMIN);
 
@@ -919,6 +940,42 @@ describe('PayoutsService', () => {
   describe('handleWebhook', () => {
     const body = Buffer.from('{"id":"evt_1"}');
 
+    it('acknowledges a duplicate event without applying it again', async () => {
+      stripe.constructWebhookEvent.mockReturnValue({
+        id: 'evt_duplicate',
+        type: 'account.updated',
+        data: { object: { id: 'acct_123', payouts_enabled: true } },
+      });
+      repository.claimStripeWebhook.mockResolvedValue(false);
+
+      await expect(service.handleWebhook(body, 'sig')).resolves.toMatchObject({
+        received: true,
+        handled: false,
+        duplicate: true,
+      });
+
+      expect(repository.setStripeStatusByAccountId).not.toHaveBeenCalled();
+    });
+
+    it('records processing failures so a later delivery can retry', async () => {
+      stripe.constructWebhookEvent.mockReturnValue({
+        id: 'evt_retryable',
+        type: 'account.updated',
+        data: { object: { id: 'acct_123', payouts_enabled: true } },
+      });
+      repository.setStripeStatusByAccountId.mockRejectedValue(
+        new Error('database unavailable'),
+      );
+
+      await expect(service.handleWebhook(body, 'sig')).rejects.toThrow(
+        'database unavailable',
+      );
+      expect(repository.markStripeWebhookFailed).toHaveBeenCalledWith(
+        'evt_retryable',
+        'database unavailable',
+      );
+    });
+
     it('rejects a missing signature with 400', async () => {
       await expect(service.handleWebhook(body, undefined)).rejects.toThrow(
         'Missing stripe-signature header',
@@ -969,7 +1026,10 @@ describe('PayoutsService', () => {
         data: { object: { id: 'tr_123', failure_message: 'Account closed' } },
       });
 
-      await service.handleWebhook(body, 'sig');
+      await expect(service.handleWebhook(body, 'sig')).resolves.toMatchObject({
+        received: true,
+        handled: true,
+      });
 
       expect(repository.markFailed).toHaveBeenCalledWith(
         PAYOUT_ID,

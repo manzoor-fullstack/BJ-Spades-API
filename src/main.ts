@@ -52,6 +52,11 @@ async function bootstrap(): Promise<void> {
   const port = config.get<number>('app.port') ?? 5000;
   const nodeEnv = config.get<string>('app.nodeEnv') ?? 'development';
   const isProduction = nodeEnv === 'production';
+  const trustedProxyHops = config.get<number>('app.trustedProxyHops') ?? 0;
+
+  // Express alone decides which forwarded address is trustworthy. This value
+  // must match the deployment topology; zero ignores all forwarded addresses.
+  app.set('trust proxy', trustedProxyHops);
 
   // FIRST, before the global prefix, pipes, or anything else that could pull
   // in Nest's own body parser. Nest registers that parser during app.init(),

@@ -134,6 +134,7 @@ export async function recordLedgerEntry(
       tournamentId: input.tournamentId ?? null,
       payoutId: input.payoutId ?? null,
       createdByAdminId: input.createdByAdminId ?? null,
+      affectsBalance: true,
       ...(input.createdAt ? { createdAt: input.createdAt } : {}),
     },
   });
@@ -238,7 +239,7 @@ export class TransactionsRepository {
       }),
       this.prisma.transaction.groupBy({
         by: ['userId'],
-        where: userId ? { userId } : {},
+        where: { affectsBalance: true, ...(userId ? { userId } : {}) },
         _sum: { amount: true },
         _count: { _all: true },
       }),

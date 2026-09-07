@@ -1234,10 +1234,11 @@ describe('Payouts API (integration)', () => {
       expect(rows[0]?.type).toBe(TransactionType.PRIZE);
       expect(rows[0]?.amount.toFixed(2)).toBe('750.25');
       expect(rows[0]?.balanceBefore.toFixed(2)).toBe('0.00');
-      expect(rows[0]?.balanceAfter.toFixed(2)).toBe('750.25');
+      expect(rows[0]?.balanceAfter.toFixed(2)).toBe('0.00');
+      expect(rows[0]?.affectsBalance).toBe(false);
       expect(rows[0]?.reference).toBe(`payout:${payout.id}`);
 
-      await expect(balanceOf(user.id)).resolves.toBe('750.25');
+      await expect(balanceOf(user.id)).resolves.toBe('0.00');
       await expect(
         transactions.verifyLedgerIntegrity(user.id),
       ).resolves.toMatchObject({ balanced: true });
@@ -1325,7 +1326,32 @@ describe('Payouts API (integration)', () => {
       await expect(
         testPrisma.transaction.count({ where: { payoutId: payout.id } }),
       ).resolves.toBe(1);
-      await expect(balanceOf(user.id)).resolves.toBe('750.25');
+      await expect(balanceOf(user.id)).resolves.toBe('0.00');
+    });
+
+    it('recovers a stale PROCESSING payout after a process restart', async () => {
+      const user = await seedUser();
+      const payout = await seedPayout(user.id, {
+        status: PayoutStatus.PROCESSING,
+        processedAt: new Date(Date.now() - 60_000),
+      });
+      const token = await adminToken();
+
+      await request(server())
+        .post(`/api/payouts/${payout.id}/process`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const stored = await testPrisma.payout.findUniqueOrThrow({
+        where: { id: payout.id },
+      });
+      expect(stored.status).toBe(PayoutStatus.PAID);
+      expect(stored.stripeTransferId).toBe('tr_fake_1');
+      expect(stripe.transfers).toHaveLength(1);
+      await expect(
+        testPrisma.transaction.count({ where: { payoutId: payout.id } }),
+      ).resolves.toBe(1);
+      await expect(balanceOf(user.id)).resolves.toBe('0.00');
     });
 
     it('refuses a second process of a PAID payout', async () => {
@@ -1349,7 +1375,7 @@ describe('Payouts API (integration)', () => {
         'Payout has already been processed',
       );
       expect(stripe.transfers).toHaveLength(1);
-      await expect(balanceOf(user.id)).resolves.toBe('750.25');
+      await expect(balanceOf(user.id)).resolves.toBe('0.00');
     });
 
     it('refuses a payout that has not been approved', async () => {
@@ -1516,6 +1542,46 @@ describe('Payouts API (integration)', () => {
       });
     });
 
+    it('applies a Stripe event once when it is delivered twice', async () => {
+      const user = await seedUser({
+        stripeConnectAccountId: 'acct_webhook_once',
+        stripeAccountStatus: StripeAccountStatus.PENDING,
+      });
+      stripe.webhookEvent = {
+        id: 'evt_account_once',
+        type: 'account.updated',
+        data: {
+          object: { id: 'acct_webhook_once', payouts_enabled: true },
+        },
+      };
+      const send = () =>
+        request(server())
+          .post('/api/payouts/stripe/webhook')
+          .set('stripe-signature', 't=1,v1=whatever')
+          .send({ id: 'evt_account_once' });
+
+      const first = await send().expect(200);
+      const updatedAt = (
+        await testPrisma.user.findUniqueOrThrow({ where: { id: user.id } })
+      ).updatedAt;
+      const second = await send().expect(200);
+
+      expect(first.body).toMatchObject({
+        data: { handled: true, duplicate: false },
+      });
+      expect(second.body).toMatchObject({
+        data: { handled: false, duplicate: true },
+      });
+      await expect(
+        testPrisma.webhookEvent.count({
+          where: { eventId: 'evt_account_once', source: 'STRIPE' },
+        }),
+      ).resolves.toBe(1);
+      await expect(
+        testPrisma.user.findUniqueOrThrow({ where: { id: user.id } }),
+      ).resolves.toMatchObject({ updatedAt });
+    });
+
     it('marks an account RESTRICTED when Stripe will not pay it', async () => {
       const user = await seedUser({
         stripeConnectAccountId: 'acct_webhook_2',
@@ -1547,11 +1613,25 @@ describe('Payouts API (integration)', () => {
       });
     });
 
-    it('marks the payout FAILED on transfer.failed', async () => {
+    it('marks a recorded external payout and its history row FAILED on transfer.failed', async () => {
       const user = await seedUser();
       const payout = await seedPayout(user.id, {
-        status: PayoutStatus.PROCESSING,
+        status: PayoutStatus.PAID,
         stripeTransferId: 'tr_gone_bad',
+        paidAt: new Date(),
+      });
+      const transaction = await testPrisma.transaction.create({
+        data: {
+          userId: user.id,
+          payoutId: payout.id,
+          type: TransactionType.PRIZE,
+          status: TransactionStatus.COMPLETED,
+          amount: payout.amount,
+          balanceBefore: user.balance,
+          balanceAfter: user.balance,
+          affectsBalance: false,
+          reference: `payout:${payout.id}`,
+        },
       });
 
       stripe.webhookEvent = {
@@ -1572,8 +1652,15 @@ describe('Payouts API (integration)', () => {
         testPrisma.payout.findUniqueOrThrow({ where: { id: payout.id } }),
       ).resolves.toMatchObject({
         status: PayoutStatus.FAILED,
+        paidAt: null,
         failureReason: 'Account closed',
       });
+      await expect(
+        testPrisma.transaction.findUniqueOrThrow({
+          where: { id: transaction.id },
+        }),
+      ).resolves.toMatchObject({ status: TransactionStatus.FAILED });
+      await expect(balanceOf(user.id)).resolves.toBe('0.00');
     });
   });
 
@@ -1801,8 +1888,8 @@ describe('Payouts API (integration)', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
 
-      // 100 opening, less a 25 entry fee, plus a 500 prize.
-      await expect(balanceOf(winner.id)).resolves.toBe('575.00');
+      // The entry fee is paid from the wallet; the prize is paid externally.
+      await expect(balanceOf(winner.id)).resolves.toBe('75.00');
       await expect(
         transactions.verifyLedgerIntegrity(winner.id),
       ).resolves.toMatchObject({ balanced: true });

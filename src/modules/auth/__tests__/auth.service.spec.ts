@@ -84,7 +84,7 @@ describe('AuthService', () => {
       revokeAllSessionsExcept: jest.fn().mockResolvedValue(0),
       createRefreshToken: jest.fn().mockResolvedValue(undefined),
       findRefreshTokenByHash: jest.fn(),
-      rotateRefreshToken: jest.fn().mockResolvedValue(undefined),
+      rotateRefreshToken: jest.fn().mockResolvedValue(true),
       deleteExpiredRefreshTokens: jest.fn(),
     };
 
@@ -379,7 +379,8 @@ describe('AuthService', () => {
       tokens.verifyRefreshToken.mockResolvedValue(validPayload);
       repository.findRefreshTokenByHash.mockResolvedValue({
         ...activeStored,
-        revokedAt: new Date(),
+        revokedAt: new Date(Date.now() - 10_000),
+        replacedByTokenId: 'token-2',
       });
 
       await expect(service.refresh('replayed')).rejects.toThrow(
@@ -388,6 +389,34 @@ describe('AuthService', () => {
 
       expect(repository.revokeSession).toHaveBeenCalledWith(SESSION.id);
       expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects a concurrent loser without revoking the winning session', async () => {
+      tokens.verifyRefreshToken.mockResolvedValue(validPayload);
+      repository.findRefreshTokenByHash.mockResolvedValue({
+        ...activeStored,
+        revokedAt: new Date(),
+        replacedByTokenId: 'token-2',
+      });
+
+      await expect(service.refresh('concurrent')).rejects.toThrow(
+        /already been rotated/i,
+      );
+
+      expect(repository.revokeSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects a lost compare-and-swap without revoking the session', async () => {
+      tokens.verifyRefreshToken.mockResolvedValue(validPayload);
+      repository.findRefreshTokenByHash.mockResolvedValue(activeStored);
+      repository.findAdminById.mockResolvedValue(ADMIN);
+      repository.rotateRefreshToken.mockResolvedValue(false);
+
+      await expect(service.refresh('racing')).rejects.toThrow(
+        /already been rotated/i,
+      );
+
+      expect(repository.revokeSession).not.toHaveBeenCalled();
     });
 
     it('rejects an expired token', async () => {
