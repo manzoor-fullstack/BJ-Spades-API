@@ -60,6 +60,7 @@ export class MediaRepository {
         tournaments: { none: {} },
         rewards: { none: {} },
         merchandise: { none: {} },
+        avatarOfPlayers: { none: {} },
       },
     });
   }

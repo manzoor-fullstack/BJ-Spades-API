@@ -16,6 +16,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_IMAGE_MIME_TYPES = [
   'image/jpeg',
   'image/png',
+  'image/gif',
   'image/webp',
 ] as const;
 
@@ -61,6 +62,14 @@ export function detectImageMimeType(
     buffer[7] === 0x0a
   ) {
     return 'image/png';
+  }
+
+  // GIF — both versions use a fixed six-byte signature.
+  if (
+    buffer.toString('ascii', 0, 6) === 'GIF87a' ||
+    buffer.toString('ascii', 0, 6) === 'GIF89a'
+  ) {
+    return 'image/gif';
   }
 
   // WebP — a RIFF container whose form type (bytes 8..11) is "WEBP". Checking
@@ -115,7 +124,7 @@ export function assertValidImage(
 
   if (detected === null) {
     throw new BadRequestException(
-      'File content is not a recognised JPEG, PNG or WebP image.',
+      'File content is not a recognised JPEG, PNG, GIF or WebP image.',
     );
   }
 

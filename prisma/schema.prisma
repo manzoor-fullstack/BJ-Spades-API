@@ -356,6 +356,7 @@ model User {
   playerSessions    PlayerSession[]
   playerEmailTokens PlayerEmailToken[]
   oauthAccounts     PlayerOAuthAccount[]
+  playerProfile     PlayerProfile?
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -371,6 +372,34 @@ model User {
   @@index([createdAt])
   @@index([deletedAt])
   @@index([email, status])
+}
+
+model PlayerProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName String  @db.VarChar(60)
+  tagline     String? @db.VarChar(100)
+  bio         String? @db.VarChar(300)
+  dateOfBirth DateTime? @db.Date
+  location    String? @db.VarChar(120)
+
+  avatarName       String @default("Poppa Cool") @db.VarChar(40)
+  avatarBackground String @default("#fbbf24") @db.VarChar(7)
+  avatarImageId    String? @unique
+  avatarImage      MediaAsset? @relation("PlayerAvatar", fields: [avatarImageId], references: [id], onDelete: SetNull)
+
+  twitter   String? @db.VarChar(200)
+  facebook  String? @db.VarChar(200)
+  instagram String? @db.VarChar(200)
+  youtube   String? @db.VarChar(200)
+  twitch    String? @db.VarChar(200)
+  discord   String? @db.VarChar(200)
+  website   String? @db.VarChar(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model PlayerCredential {
@@ -583,6 +612,7 @@ model MediaAsset {
   /// `uploadedByAdmin`: the admin who uploaded a picture is not necessarily
   /// the admin wearing it.
   avatarOfAdmins Admin[] @relation("AdminAvatar")
+  avatarOfPlayers PlayerProfile[] @relation("PlayerAvatar")
 
   tournaments Tournament[]
   rewards     Reward[]

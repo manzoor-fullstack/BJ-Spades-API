@@ -31,6 +31,13 @@ function webpBytes(): Buffer {
   ]);
 }
 
+function gifBytes(): Buffer {
+  return Buffer.concat([
+    Buffer.from('GIF89a', 'ascii'),
+    Buffer.from([0x01, 0x00, 0x01, 0x00, 0x80, 0x00]),
+  ]);
+}
+
 function upload(overrides: Partial<ValidatableUpload> = {}): ValidatableUpload {
   return {
     buffer: jpegBytes(),
@@ -41,9 +48,10 @@ function upload(overrides: Partial<ValidatableUpload> = {}): ValidatableUpload {
 }
 
 describe('detectImageMimeType', () => {
-  it('identifies JPEG, PNG and WebP by their headers', () => {
+  it('identifies JPEG, PNG, GIF and WebP by their headers', () => {
     expect(detectImageMimeType(jpegBytes())).toBe('image/jpeg');
     expect(detectImageMimeType(pngBytes())).toBe('image/png');
+    expect(detectImageMimeType(gifBytes())).toBe('image/gif');
     expect(detectImageMimeType(webpBytes())).toBe('image/webp');
   });
 
@@ -71,11 +79,14 @@ describe('detectImageMimeType', () => {
 });
 
 describe('isAllowedImageMimeType', () => {
-  it.each(['image/jpeg', 'image/png', 'image/webp'])('allows %s', (mime) => {
-    expect(isAllowedImageMimeType(mime)).toBe(true);
-  });
+  it.each(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])(
+    'allows %s',
+    (mime) => {
+      expect(isAllowedImageMimeType(mime)).toBe(true);
+    },
+  );
 
-  it.each(['image/gif', 'image/svg+xml', 'application/x-php', 'text/html'])(
+  it.each(['image/svg+xml', 'application/x-php', 'text/html'])(
     'rejects %s',
     (mime) => {
       expect(isAllowedImageMimeType(mime)).toBe(false);
@@ -110,9 +121,9 @@ describe('assertValidImage', () => {
   });
 
   it('rejects a declared MIME type outside the allowlist', () => {
-    expect(() => assertValidImage(upload({ mimetype: 'image/gif' }))).toThrow(
-      BadRequestException,
-    );
+    expect(() =>
+      assertValidImage(upload({ mimetype: 'image/svg+xml' })),
+    ).toThrow(BadRequestException);
   });
 
   it('rejects a PHP payload renamed to .jpg', () => {
@@ -130,7 +141,7 @@ describe('assertValidImage', () => {
 
     expect(() => assertValidImage(payload)).toThrow(BadRequestException);
     expect(() => assertValidImage(payload)).toThrow(
-      /not a recognised JPEG, PNG or WebP image/,
+      /not a recognised JPEG, PNG, GIF or WebP image/,
     );
   });
 
