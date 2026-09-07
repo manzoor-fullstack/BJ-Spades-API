@@ -29,6 +29,7 @@ import type { Paginated } from '../../common/interceptors/transform.interceptor'
 import { formatMoney } from '../../common/money/money.util';
 import { ActivityLogService } from '../activity/activity.service';
 import { SettingsService } from '../settings/settings.service';
+import { PlayerDepositsService } from '../player-deposits/player-deposits.service';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
 import { STRIPE_GATEWAY } from '../stripe/stripe.interface';
 import type {
@@ -164,6 +165,7 @@ export class PayoutsService {
     private readonly config: ConfigService,
     @Inject(STRIPE_GATEWAY) private readonly stripe: StripeGateway,
     private readonly settings: SettingsService,
+    private readonly deposits: PlayerDepositsService,
   ) {}
 
   async findAll(query: QueryPayoutsDto): Promise<Paginated<PayoutListItem[]>> {
@@ -675,6 +677,10 @@ export class PayoutsService {
 
   private async applyWebhookEvent(event: StripeWebhookEvent): Promise<boolean> {
     const object = event.data.object;
+
+    if (await this.deposits.handleStripeEvent(event)) {
+      return true;
+    }
 
     switch (event.type) {
       case 'account.updated': {

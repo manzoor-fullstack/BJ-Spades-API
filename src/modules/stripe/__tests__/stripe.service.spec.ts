@@ -84,6 +84,33 @@ describe('StripeService without a secret key', () => {
           returnUrl: 'http://x/return',
         }),
     ],
+    [
+      'createCustomer',
+      () =>
+        service.createCustomer({
+          email: 'a@b.com',
+          userId: 'user-1',
+          idempotencyKey: 'player-customer_user-1',
+        }),
+    ],
+    [
+      'createCheckoutSession',
+      () =>
+        service.createCheckoutSession({
+          amount: '10.00',
+          currency: 'USD',
+          customerId: 'cus_1',
+          depositId: 'deposit-1',
+          successUrl: 'http://x/success',
+          cancelUrl: 'http://x/cancel',
+          idempotencyKey: 'deposit_deposit-1',
+        }),
+    ],
+    ['expireCheckoutSession', () => service.expireCheckoutSession('cs_1')],
+    [
+      'retrievePaymentMethodForIntent',
+      () => service.retrievePaymentMethodForIntent('pi_1'),
+    ],
   ])(
     '%s fails with a message naming STRIPE_SECRET_KEY',
     async (_label, call) => {

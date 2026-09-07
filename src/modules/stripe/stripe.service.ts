@@ -10,11 +10,16 @@ import { toMoney } from '../../common/money/money.util';
 
 import type {
   CreateAccountLinkParams,
+  CreateCheckoutSessionParams,
   CreateConnectAccountParams,
+  CreateStripeCustomerParams,
   CreateTransferParams,
   StripeAccountLink,
   StripeConnectAccount,
+  StripeCheckoutSession,
+  StripeCustomer,
   StripeGateway,
+  StripePaymentMethod,
   StripeTransfer,
   StripeWebhookEvent,
 } from './stripe.interface';
@@ -122,6 +127,103 @@ export class StripeService implements StripeGateway {
     });
 
     return { url: link.url, expiresAt: link.expires_at };
+  }
+
+  async createCustomer(
+    params: CreateStripeCustomerParams,
+  ): Promise<StripeCustomer> {
+    const customer = await this.stripe().customers.create(
+      { email: params.email, metadata: { userId: params.userId } },
+      { idempotencyKey: params.idempotencyKey },
+    );
+
+    return { id: customer.id };
+  }
+
+  async createCheckoutSession(
+    params: CreateCheckoutSessionParams,
+  ): Promise<StripeCheckoutSession> {
+    const session = await this.stripe().checkout.sessions.create(
+      {
+        mode: 'payment',
+        customer: params.customerId,
+        client_reference_id: params.depositId,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: params.currency.toLowerCase(),
+              unit_amount: toMinorUnits(params.amount),
+              product_data: {
+                name: `${params.amount} BJ Spades tokens`,
+              },
+            },
+          },
+        ],
+        payment_intent_data: {
+          // The method remains provider-owned and is attached to this Customer
+          // after any required authentication completes.
+          setup_future_usage: 'on_session',
+          metadata: {
+            depositId: params.depositId,
+            customerId: params.customerId,
+          },
+        },
+        metadata: { depositId: params.depositId },
+        success_url: params.successUrl,
+        cancel_url: params.cancelUrl,
+      },
+      { idempotencyKey: params.idempotencyKey },
+    );
+
+    if (!session.url) {
+      throw new ServiceUnavailableException(
+        'Stripe did not return a Checkout URL.',
+      );
+    }
+
+    return {
+      id: session.id,
+      url: session.url,
+      paymentIntentId:
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : (session.payment_intent?.id ?? null),
+    };
+  }
+
+  async expireCheckoutSession(sessionId: string): Promise<void> {
+    await this.stripe().checkout.sessions.expire(sessionId);
+  }
+
+  async retrievePaymentMethodForIntent(
+    paymentIntentId: string,
+  ): Promise<StripePaymentMethod | null> {
+    const intent = await this.stripe().paymentIntents.retrieve(
+      paymentIntentId,
+      {
+        expand: ['payment_method'],
+      },
+    );
+    const method = intent.payment_method;
+
+    if (!method || typeof method === 'string') {
+      return null;
+    }
+
+    const details = method.card ?? method.us_bank_account;
+
+    return {
+      id: method.id,
+      type: method.type,
+      brand:
+        details && 'brand' in details && typeof details.brand === 'string'
+          ? details.brand
+          : method.type,
+      last4: details?.last4 ?? null,
+      expMonth: details && 'exp_month' in details ? details.exp_month : null,
+      expYear: details && 'exp_year' in details ? details.exp_year : null,
+    };
   }
 
   constructWebhookEvent(

@@ -281,6 +281,10 @@ describe('PayoutsService', () => {
       createConnectAccount: jest.fn(),
       retrieveConnectAccount: jest.fn(),
       createAccountLink: jest.fn(),
+      createCustomer: jest.fn(),
+      createCheckoutSession: jest.fn(),
+      expireCheckoutSession: jest.fn(),
+      retrievePaymentMethodForIntent: jest.fn(),
       constructWebhookEvent: jest.fn(),
     };
 
@@ -304,6 +308,7 @@ describe('PayoutsService', () => {
       } as unknown as ConfigService,
       stripe,
       settings as unknown as SettingsService,
+      { handleStripeEvent: jest.fn().mockResolvedValue(false) } as never,
     );
   });
 

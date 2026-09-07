@@ -163,6 +163,26 @@ class FakeStripe implements StripeGateway {
     };
   }
 
+  createCustomer() {
+    return Promise.resolve({ id: 'cus_test' });
+  }
+
+  createCheckoutSession() {
+    return Promise.resolve({
+      id: 'cs_test',
+      url: 'https://checkout.stripe.test/session',
+      paymentIntentId: null,
+    });
+  }
+
+  expireCheckoutSession() {
+    return Promise.resolve();
+  }
+
+  retrievePaymentMethodForIntent() {
+    return Promise.resolve(null);
+  }
+
   createConnectAccount(params: { email: string; userId: string }) {
     this.counter += 1;
 

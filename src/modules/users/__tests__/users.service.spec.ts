@@ -76,6 +76,7 @@ const BASE_USER: User = {
   webhookEventId: null,
   // Added by the Phase 6 schema; a Prisma `User` now includes these.
   stripeConnectAccountId: null,
+  stripeCustomerId: null,
   stripeAccountStatus: StripeAccountStatus.NOT_CONNECTED,
   stripeVerifiedAt: null,
   deletedAt: null,

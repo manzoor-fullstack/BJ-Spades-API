@@ -19,9 +19,12 @@ export class PlayerWalletRepository {
     userId: string,
     since: Date,
   ): Promise<PlayerWalletTotals | null> {
-    const completedWhere: Prisma.TransactionWhereInput = {
+    const settledWhere: Prisma.TransactionWhereInput = {
       userId,
-      status: TransactionStatus.COMPLETED,
+      // REVERSED entries are real compensating movements (for example a card
+      // refund), so excluding them would make the summary disagree with the
+      // available balance.
+      status: { in: [TransactionStatus.COMPLETED, TransactionStatus.REVERSED] },
       affectsBalance: true,
     };
 
@@ -32,11 +35,11 @@ export class PlayerWalletRepository {
       }),
       this.prisma.transaction.groupBy({
         by: ['type'],
-        where: completedWhere,
+        where: settledWhere,
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { ...completedWhere, createdAt: { gte: since } },
+        where: { ...settledWhere, createdAt: { gte: since } },
         _sum: { amount: true },
       }),
       this.prisma.transaction.aggregate({

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { SettingsModule } from '../settings/settings.module';
 import { StripeModule } from '../stripe/stripe.module';
+import { PlayerDepositsModule } from '../player-deposits/player-deposits.module';
 
 import { PayoutsController } from './payouts.controller';
 import { PayoutsService } from './payouts.service';
@@ -13,7 +14,7 @@ import { PayoutsRepository } from './repositories/payouts.repository';
  * `StripeService` — it injects `STRIPE_GATEWAY` (ADR-003).
  */
 @Module({
-  imports: [StripeModule, SettingsModule],
+  imports: [StripeModule, SettingsModule, PlayerDepositsModule],
   controllers: [PayoutsController],
   providers: [PayoutsService, PayoutsRepository],
   exports: [PayoutsService, PayoutsRepository],
