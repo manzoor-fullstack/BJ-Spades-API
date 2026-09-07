@@ -34,7 +34,7 @@ describe('MediaRepository.findOrphans', () => {
     expect(whereClause().createdAt).toEqual({ lt: cutoff });
   });
 
-  it.each(['tournaments', 'rewards', 'merchandise'])(
+  it.each(['tournaments', 'rewards', 'merchandise', 'avatarOfPlayers'])(
     'treats an asset referenced by a %s row as still in use',
     async (relation) => {
       await repository.findOrphans(new Date());
@@ -53,6 +53,7 @@ describe('MediaRepository.findOrphans', () => {
     // without a matching clause here is exactly the bug this asserts against,
     // and a derived list would grow with the schema and never fail.
     expect(Object.keys(whereClause()).sort()).toEqual([
+      'avatarOfPlayers',
       'createdAt',
       'merchandise',
       'rewards',

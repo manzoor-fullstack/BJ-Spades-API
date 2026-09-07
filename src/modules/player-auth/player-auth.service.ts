@@ -50,6 +50,10 @@ export interface PlayerView {
   email: string;
   tier: string;
   emailVerified: boolean;
+  displayName: string;
+  avatarName: string;
+  avatarBackground: string;
+  avatarUrl: string | null;
 }
 
 export interface PlayerSessionResult {
@@ -549,6 +553,12 @@ export class PlayerAuthService implements OnModuleInit {
       email: user.email,
       tier: user.tier,
       emailVerified: user.emailVerified,
+      displayName:
+        user.playerProfile?.displayName ??
+        `${user.firstName} ${user.lastName}`.trim(),
+      avatarName: user.playerProfile?.avatarName ?? 'Poppa Cool',
+      avatarBackground: user.playerProfile?.avatarBackground ?? '#fbbf24',
+      avatarUrl: user.playerProfile?.avatarImage?.url ?? null,
     };
   }
 }

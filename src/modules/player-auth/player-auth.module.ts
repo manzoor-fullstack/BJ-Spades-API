@@ -37,6 +37,11 @@ import { PlayerJwtStrategy } from './strategies/player-jwt.strategy';
     PlayerOriginGuard,
     PlayerCsrfGuard,
   ],
-  exports: [PlayerAuthService],
+  exports: [
+    PlayerAuthService,
+    PlayerJwtGuard,
+    PlayerOriginGuard,
+    PlayerCsrfGuard,
+  ],
 })
 export class PlayerAuthModule {}

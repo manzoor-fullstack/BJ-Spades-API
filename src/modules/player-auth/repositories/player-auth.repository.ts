@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 const USER_WITH_CREDENTIAL = {
   credential: true,
+  playerProfile: { include: { avatarImage: true } },
 } satisfies Prisma.UserInclude;
 
 const REFRESH_WITH_SESSION = {
