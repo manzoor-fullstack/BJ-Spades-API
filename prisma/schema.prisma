@@ -67,6 +67,32 @@ enum RegistrationStatus {
   DISQUALIFIED
 }
 
+enum GameMatchStatus {
+  BIDDING
+  PLAYING
+  COMPLETED
+  FORFEITED
+  CANCELLED
+}
+
+enum GameCommandType {
+  BID
+  PLAY_CARD
+  CLAIM_TIMEOUT
+  FORFEIT
+}
+
+enum GameEventType {
+  MATCH_CREATED
+  BID_PLACED
+  CARD_PLAYED
+  TRICK_COMPLETED
+  HAND_COMPLETED
+  MATCH_COMPLETED
+  TURN_TIMED_OUT
+  PLAYER_FORFEITED
+}
+
 enum PayoutStatus {
   PENDING
   PENDING_REVIEW
@@ -362,24 +388,28 @@ model User {
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
-  registrations     TournamentRegistration[]
-  hostedTournaments Tournament[]             @relation("PlayerHostedTournaments")
-  payouts           Payout[]
-  transactions      Transaction[]
-  securityAlerts    SecurityAlert[]
-  prizeClaims       PrizeClaim[]
-  disputes          Dispute[]
-  verification      PlayerVerification?
-  payoutMethods     PayoutMethodAccount[]
-  taxDocuments      TaxDocument[]
-  shipments         Shipment[]
-  credential        PlayerCredential?
-  playerSessions    PlayerSession[]
-  deposits          Deposit[]
-  paymentMethods    PlayerPaymentMethod[]
-  playerEmailTokens PlayerEmailToken[]
-  oauthAccounts     PlayerOAuthAccount[]
-  playerProfile     PlayerProfile?
+  registrations      TournamentRegistration[]
+  hostedTournaments  Tournament[]             @relation("PlayerHostedTournaments")
+  payouts            Payout[]
+  transactions       Transaction[]
+  securityAlerts     SecurityAlert[]
+  prizeClaims        PrizeClaim[]
+  disputes           Dispute[]
+  verification       PlayerVerification?
+  payoutMethods      PayoutMethodAccount[]
+  taxDocuments       TaxDocument[]
+  shipments          Shipment[]
+  credential         PlayerCredential?
+  playerSessions     PlayerSession[]
+  deposits           Deposit[]
+  paymentMethods     PlayerPaymentMethod[]
+  playerEmailTokens  PlayerEmailToken[]
+  oauthAccounts      PlayerOAuthAccount[]
+  playerProfile      PlayerProfile?
+  createdGameMatches GameMatch[]              @relation("GameMatchCreator")
+  gameSeats          GameSeat[]
+  gameCommands       GameCommand[]
+  gameEvents         GameEvent[]              @relation("GameEventActor")
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -402,15 +432,15 @@ model PlayerProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  displayName String  @db.VarChar(60)
-  tagline     String? @db.VarChar(100)
-  bio         String? @db.VarChar(300)
+  displayName String    @db.VarChar(60)
+  tagline     String?   @db.VarChar(100)
+  bio         String?   @db.VarChar(300)
   dateOfBirth DateTime? @db.Date
-  location    String? @db.VarChar(120)
+  location    String?   @db.VarChar(120)
 
-  avatarName       String @default("Poppa Cool") @db.VarChar(40)
-  avatarBackground String @default("#fbbf24") @db.VarChar(7)
-  avatarImageId    String? @unique
+  avatarName       String      @default("Poppa Cool") @db.VarChar(40)
+  avatarBackground String      @default("#fbbf24") @db.VarChar(7)
+  avatarImageId    String?     @unique
   avatarImage      MediaAsset? @relation("PlayerAvatar", fields: [avatarImageId], references: [id], onDelete: SetNull)
 
   twitter   String? @db.VarChar(200)
@@ -634,7 +664,7 @@ model MediaAsset {
   /// Admins using this asset as their profile picture. Separate from
   /// `uploadedByAdmin`: the admin who uploaded a picture is not necessarily
   /// the admin wearing it.
-  avatarOfAdmins Admin[] @relation("AdminAvatar")
+  avatarOfAdmins  Admin[]         @relation("AdminAvatar")
   avatarOfPlayers PlayerProfile[] @relation("PlayerAvatar")
 
   tournaments Tournament[]
@@ -687,6 +717,7 @@ model Tournament {
   transactions  Transaction[]
   prizeClaims   PrizeClaim[]
   disputes      Dispute[]
+  gameMatches   GameMatch[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -729,6 +760,112 @@ model TournamentRegistration {
   @@unique([tournamentId, userId])
   @@index([userId])
   @@index([tournamentId, status])
+}
+
+model GameMatch {
+  id String @id @default(uuid())
+
+  status            GameMatchStatus @default(BIDDING)
+  rulesVersion      String          @db.VarChar(60)
+  creationRequestId String          @db.VarChar(80)
+
+  createdByPlayerId String
+  createdByPlayer   User   @relation("GameMatchCreator", fields: [createdByPlayerId], references: [id])
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  /// Full authoritative snapshot. API serializers expose only the requesting
+  /// seat's hand; other hands never leave the service boundary.
+  state Json
+
+  version          Int       @default(1)
+  handNumber       Int       @default(1)
+  dealerSeat       Int
+  currentSeat      Int?
+  winnerTeam       Int?
+  actionDeadlineAt DateTime?
+  completedAt      DateTime?
+
+  seats    GameSeat[]
+  commands GameCommand[]
+  events   GameEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([createdByPlayerId, creationRequestId])
+  @@index([status, updatedAt])
+  @@index([tournamentId, status])
+}
+
+model GameSeat {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  seat Int
+  team Int
+
+  entryTokenHash      String?   @db.VarChar(64)
+  entryTokenExpiresAt DateTime?
+  joinedAt            DateTime?
+  revealedHandNumber  Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, seat])
+  @@unique([matchId, userId])
+  @@index([userId, createdAt])
+}
+
+model GameCommand {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  idempotencyKey  String          @db.VarChar(80)
+  expectedVersion Int
+  resultVersion   Int
+  type            GameCommandType
+  payload         Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, userId, idempotencyKey])
+  @@index([matchId, resultVersion])
+  @@index([userId, createdAt])
+}
+
+model GameEvent {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  sequence Int
+  type     GameEventType
+
+  actorUserId String?
+  actorUser   User?   @relation("GameEventActor", fields: [actorUserId], references: [id])
+
+  /// Public event data only. Private hands live in GameMatch.state and are
+  /// projected for the authenticated seat by MatchesService.
+  payload Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, sequence])
+  @@index([matchId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Reward {
@@ -813,13 +950,15 @@ model MerchandiseVariant {
   color String?
 
   /// Optional, but unique when supplied. Auto-generated when omitted.
-  sku   String? @unique
-  stock Int     @default(0)
+  sku      String? @unique
+  stock    Int     @default(0)
+  position Int     @default(0)
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   shipments Shipment[]
 
+  @@index([merchandiseId, position])
   @@index([merchandiseId])
 }
 

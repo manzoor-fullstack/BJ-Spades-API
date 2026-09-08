@@ -248,13 +248,22 @@ export async function seedRewards(prisma: PrismaClient) {
       create: { id: seed.id, ...data },
     });
 
-    for (const variant of seed.variants) {
+    // Move existing positions out of the target range before idempotent
+    // upserts. This avoids transient unique collisions when an older database
+    // derived a different order from equal creation timestamps.
+    await prisma.merchandiseVariant.updateMany({
+      where: { merchandiseId: seed.id },
+      data: { position: { increment: seed.variants.length + 1000 } },
+    });
+
+    for (const [position, variant] of seed.variants.entries()) {
       const variantData = {
         merchandiseId: seed.id,
         size: variant.size,
         color: variant.color,
         sku: variant.sku,
         stock: variant.stock,
+        position,
       };
 
       await prisma.merchandiseVariant.upsert({

@@ -44,6 +44,7 @@ function variantFixture(overrides: Partial<VariantRow> = {}): VariantRow {
     color: 'Black',
     sku: 'MERCH-4444-L-BLACK',
     stock: 10,
+    position: 0,
     createdAt: new Date('2026-07-01T00:00:00.000Z'),
     updatedAt: new Date('2026-07-01T00:00:00.000Z'),
     ...overrides,

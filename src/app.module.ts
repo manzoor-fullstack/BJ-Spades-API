@@ -19,6 +19,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './modules/auth/guards/permissions.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MerchandiseModule } from './modules/merchandise/merchandise.module';
+import { MatchesModule } from './modules/matches/matches.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { PayoutMethodsModule } from './modules/payout-methods/payout-methods.module';
@@ -91,6 +92,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     PlayerWalletModule,
 
     PlayerDepositsModule,
+
+    MatchesModule,
 
     RolesModule,
 
