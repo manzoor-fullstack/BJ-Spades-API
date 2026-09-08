@@ -93,6 +93,21 @@ enum GameEventType {
   PLAYER_FORFEITED
 }
 
+enum PlayerFriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum GameChallengeStatus {
+  PENDING
+  ACCEPTED
+  MATCHED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
 enum PayoutStatus {
   PENDING
   PENDING_REVIEW
@@ -388,28 +403,36 @@ model User {
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
-  registrations      TournamentRegistration[]
-  hostedTournaments  Tournament[]             @relation("PlayerHostedTournaments")
-  payouts            Payout[]
-  transactions       Transaction[]
-  securityAlerts     SecurityAlert[]
-  prizeClaims        PrizeClaim[]
-  disputes           Dispute[]
-  verification       PlayerVerification?
-  payoutMethods      PayoutMethodAccount[]
-  taxDocuments       TaxDocument[]
-  shipments          Shipment[]
-  credential         PlayerCredential?
-  playerSessions     PlayerSession[]
-  deposits           Deposit[]
-  paymentMethods     PlayerPaymentMethod[]
-  playerEmailTokens  PlayerEmailToken[]
-  oauthAccounts      PlayerOAuthAccount[]
-  playerProfile      PlayerProfile?
-  createdGameMatches GameMatch[]              @relation("GameMatchCreator")
-  gameSeats          GameSeat[]
-  gameCommands       GameCommand[]
-  gameEvents         GameEvent[]              @relation("GameEventActor")
+  registrations       TournamentRegistration[]
+  hostedTournaments   Tournament[]             @relation("PlayerHostedTournaments")
+  payouts             Payout[]
+  transactions        Transaction[]
+  securityAlerts      SecurityAlert[]
+  prizeClaims         PrizeClaim[]
+  disputes            Dispute[]
+  verification        PlayerVerification?
+  payoutMethods       PayoutMethodAccount[]
+  taxDocuments        TaxDocument[]
+  shipments           Shipment[]
+  credential          PlayerCredential?
+  playerSessions      PlayerSession[]
+  deposits            Deposit[]
+  paymentMethods      PlayerPaymentMethod[]
+  playerEmailTokens   PlayerEmailToken[]
+  oauthAccounts       PlayerOAuthAccount[]
+  playerProfile       PlayerProfile?
+  createdGameMatches  GameMatch[]              @relation("GameMatchCreator")
+  gameSeats           GameSeat[]
+  gameCommands        GameCommand[]
+  gameEvents          GameEvent[]              @relation("GameEventActor")
+  friendshipsAsFirst  PlayerFriendship[]       @relation("FriendshipFirst")
+  friendshipsAsSecond PlayerFriendship[]       @relation("FriendshipSecond")
+  friendshipRequests  PlayerFriendship[]       @relation("FriendshipRequester")
+  blocksCreated       PlayerBlock[]            @relation("BlockCreator")
+  blocksReceived      PlayerBlock[]            @relation("BlockTarget")
+  playerPresence      PlayerPresence?
+  challengesSent      GameChallenge[]          @relation("ChallengeSender")
+  challengesReceived  GameChallenge[]          @relation("ChallengeRecipient")
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -490,6 +513,81 @@ model PlayerSession {
 
   @@index([userId, isActive])
   @@index([expiresAt])
+}
+
+model PlayerFriendship {
+  id String @id @default(uuid())
+
+  /// Canonical ordering is enforced by the service and database constraint.
+  playerOneId String
+  playerOne   User   @relation("FriendshipFirst", fields: [playerOneId], references: [id], onDelete: Cascade)
+  playerTwoId String
+  playerTwo   User   @relation("FriendshipSecond", fields: [playerTwoId], references: [id], onDelete: Cascade)
+
+  requestedById String
+  requestedBy   User                   @relation("FriendshipRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  status        PlayerFriendshipStatus @default(PENDING)
+
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([playerOneId, playerTwoId])
+  @@index([playerOneId, status])
+  @@index([playerTwoId, status])
+  @@index([requestedById, status])
+}
+
+model PlayerBlock {
+  id String @id @default(uuid())
+
+  blockerId String
+  blocker   User   @relation("BlockCreator", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User   @relation("BlockTarget", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model PlayerPresence {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  heartbeatAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([heartbeatAt])
+}
+
+model GameChallenge {
+  id String @id @default(uuid())
+
+  challengerId String
+  challenger   User   @relation("ChallengeSender", fields: [challengerId], references: [id], onDelete: Cascade)
+  challengedId String
+  challenged   User   @relation("ChallengeRecipient", fields: [challengedId], references: [id], onDelete: Cascade)
+
+  requestId  String              @db.VarChar(80)
+  status     GameChallengeStatus @default(PENDING)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  resolvedAt DateTime?
+
+  matchId String?
+  match   GameMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([challengerId, requestId])
+  @@index([challengedId, status, expiresAt])
+  @@index([challengerId, status, expiresAt])
+  @@index([status, acceptedAt])
+  @@index([matchId])
 }
 
 model PlayerRefreshToken {
@@ -787,9 +885,10 @@ model GameMatch {
   actionDeadlineAt DateTime?
   completedAt      DateTime?
 
-  seats    GameSeat[]
-  commands GameCommand[]
-  events   GameEvent[]
+  seats      GameSeat[]
+  commands   GameCommand[]
+  events     GameEvent[]
+  challenges GameChallenge[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

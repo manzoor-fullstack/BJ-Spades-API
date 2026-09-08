@@ -189,6 +189,72 @@ export class MatchesService {
     }
   }
 
+  /**
+   * Creates the F07 match inside the caller's transaction. F08 uses this only
+   * after both two-player friend challenges have been accepted. Team members
+   * are deliberately placed opposite each other (0/2 and 1/3).
+   */
+  async createForAcceptedTeams(
+    tx: Prisma.TransactionClient,
+    teamOne: readonly [string, string],
+    teamTwo: readonly [string, string],
+    requestId: string,
+  ): Promise<string> {
+    const playerIds = [teamOne[0], teamTwo[0], teamOne[1], teamTwo[1]];
+    const players = await tx.user.findMany({
+      where: {
+        id: { in: playerIds },
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+        emailVerified: true,
+      },
+      select: { id: true },
+    });
+    if (players.length !== SPADES_RULES_V1.playerCount) {
+      throw new UnprocessableEntityException(
+        'A match requires four distinct active, verified players.',
+      );
+    }
+
+    const state = createSpadesState();
+    const match = await tx.gameMatch.create({
+      data: {
+        status: GameMatchStatus.BIDDING,
+        rulesVersion: SPADES_RULESET_VERSION,
+        creationRequestId: requestId,
+        createdByPlayerId: teamOne[0],
+        state: state as unknown as Prisma.InputJsonValue,
+        version: state.version,
+        handNumber: state.handNumber,
+        dealerSeat: state.dealerSeat,
+        currentSeat: state.currentSeat,
+        actionDeadlineAt: this.nextDeadline(),
+        seats: {
+          create: playerIds.map((userId, seat) => ({
+            userId,
+            seat,
+            team: seat % 2,
+          })),
+        },
+        events: {
+          create: {
+            sequence: state.version,
+            type: GameEventType.MATCH_CREATED,
+            actorUserId: teamOne[0],
+            payload: {
+              rulesVersion: SPADES_RULESET_VERSION,
+              dealerSeat: state.dealerSeat,
+              currentSeat: state.currentSeat,
+              source: 'FRIEND_CHALLENGE',
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    return match.id;
+  }
+
   async list(playerId: string) {
     const matches = await this.prisma.gameMatch.findMany({
       where: { seats: { some: { userId: playerId } } },

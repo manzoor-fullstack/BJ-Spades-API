@@ -25,6 +25,7 @@ import { DisputesModule } from './modules/disputes/disputes.module';
 import { PayoutMethodsModule } from './modules/payout-methods/payout-methods.module';
 import { PlayerAuthModule } from './modules/player-auth/player-auth.module';
 import { PlayerProfileModule } from './modules/player-profile/player-profile.module';
+import { PlayerSocialModule } from './modules/player-social/player-social.module';
 import { PlayerWalletModule } from './modules/player-wallet/player-wallet.module';
 import { PlayerDepositsModule } from './modules/player-deposits/player-deposits.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
@@ -88,6 +89,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     PlayerAuthModule,
 
     PlayerProfileModule,
+
+    PlayerSocialModule,
 
     PlayerWalletModule,
 
