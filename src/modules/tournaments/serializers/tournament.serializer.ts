@@ -47,7 +47,8 @@ export interface TournamentListItem {
 }
 
 export interface TournamentDetail extends TournamentListItem {
-  createdByAdminId: string;
+  createdByAdminId: string | null;
+  createdByPlayerId: string | null;
   updatedAt: Date;
 }
 
@@ -113,6 +114,7 @@ export function toTournamentDetail(
   return {
     ...toTournamentListItem(tournament),
     createdByAdminId: tournament.createdByAdminId,
+    createdByPlayerId: tournament.createdByPlayerId,
     updatedAt: tournament.updatedAt,
   };
 }

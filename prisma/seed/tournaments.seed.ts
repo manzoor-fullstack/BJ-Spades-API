@@ -26,6 +26,10 @@ interface TournamentSeed {
   maxPlayers: number;
   startsAt: string;
   status: TournamentStatus;
+  isFeatured?: boolean;
+  featuredSubtitle?: string;
+  xpMultiplier?: string;
+  featuredRewards?: string[];
   cancelledAt?: string;
   cancelReason?: string;
   /** How many of the seeded users to sign up, taken in a stable order. */
@@ -55,6 +59,14 @@ const TOURNAMENTS: TournamentSeed[] = [
     maxPlayers: 16,
     startsAt: '2026-06-05T23:00:00.000Z',
     status: TournamentStatus.REGISTERING,
+    isFeatured: true,
+    featuredSubtitle: 'Weekly open bracket',
+    xpMultiplier: '2.50',
+    featuredRewards: [
+      'Exclusive Champion Animation',
+      'Golden Spade Avatar',
+      'VIP Status for 1 Month',
+    ],
     registrations: 6,
   },
   {
@@ -131,6 +143,10 @@ export async function seedTournaments(prisma: PrismaClient) {
       maxPlayers: seed.maxPlayers,
       startsAt: new Date(seed.startsAt),
       status: seed.status,
+      isFeatured: seed.isFeatured ?? false,
+      featuredSubtitle: seed.featuredSubtitle ?? null,
+      xpMultiplier: new Prisma.Decimal(seed.xpMultiplier ?? '1.00'),
+      featuredRewards: seed.featuredRewards ?? [],
       cancelledAt: seed.cancelledAt ? new Date(seed.cancelledAt) : null,
       cancelReason: seed.cancelReason ?? null,
       createdByAdminId: admin.id,

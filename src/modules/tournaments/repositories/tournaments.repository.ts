@@ -52,6 +52,35 @@ const REGISTRATION_INCLUDE = {
   },
 } satisfies Prisma.TournamentRegistrationInclude;
 
+const PLAYER_REGISTRATION_SELECT = {
+  id: true,
+  status: true,
+  placement: true,
+  prizeWon: true,
+  registeredAt: true,
+  entryAttempt: true,
+} satisfies Prisma.TournamentRegistrationSelect;
+
+const PLAYER_TOURNAMENT_INCLUDE = {
+  image: true,
+  registrations: { select: PLAYER_REGISTRATION_SELECT },
+  _count: {
+    select: {
+      registrations: {
+        where: {
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.TournamentInclude;
+
+export type PlayerTournamentWithState = Prisma.TournamentGetPayload<{
+  include: typeof PLAYER_TOURNAMENT_INCLUDE;
+}>;
+
 export type RegistrationWithUser = Prisma.TournamentRegistrationGetPayload<{
   include: typeof REGISTRATION_INCLUDE;
 }>;
@@ -81,6 +110,14 @@ export interface CreateTournamentData {
   startsAt: Date;
   status: TournamentStatus;
   createdByAdminId: string;
+}
+
+export interface CreatePlayerTournamentData {
+  name: string;
+  description: string | null;
+  maxPlayers: number;
+  startsAt: Date;
+  createdByPlayerId: string;
 }
 
 export interface UpdateTournamentData {
@@ -207,6 +244,102 @@ export class TournamentsRepository {
     return this.prisma.tournament.findUnique({
       where: { id },
       include: TOURNAMENT_INCLUDE,
+    });
+  }
+
+  findPlayerVisible(userId: string): Promise<PlayerTournamentWithState[]> {
+    return this.prisma.tournament.findMany({
+      where: {
+        OR: [
+          { visibility: 'PUBLIC' },
+          { createdByPlayerId: userId },
+          { registrations: { some: { userId } } },
+        ],
+      },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+      },
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }, { id: 'asc' }],
+      take: 200,
+    });
+  }
+
+  findPlayerVisibleById(
+    userId: string,
+    id: string,
+  ): Promise<PlayerTournamentWithState | null> {
+    return this.prisma.tournament.findFirst({
+      where: {
+        id,
+        OR: [
+          { visibility: 'PUBLIC' },
+          { createdByPlayerId: userId },
+          { registrations: { some: { userId } } },
+        ],
+      },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+      },
+    });
+  }
+
+  findHostedByPlayer(userId: string): Promise<PlayerTournamentWithState[]> {
+    return this.prisma.tournament.findMany({
+      where: { createdByPlayerId: userId },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+      },
+      orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+      take: 100,
+    });
+  }
+
+  createPlayerHosted(
+    data: CreatePlayerTournamentData,
+  ): Promise<PlayerTournamentWithState> {
+    return this.prisma.$transaction(async (tx) => {
+      const tournament = await tx.tournament.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          maxPlayers: data.maxPlayers,
+          startsAt: data.startsAt,
+          status: TournamentStatus.SCHEDULED,
+          visibility: 'PRIVATE',
+          entryFee: toMoney(0),
+          prizePool: toMoney(0),
+          createdByPlayerId: data.createdByPlayerId,
+        },
+      });
+      await tx.tournamentRegistration.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: data.createdByPlayerId,
+          status: RegistrationStatus.REGISTERED,
+        },
+      });
+      return tx.tournament.findUniqueOrThrow({
+        where: { id: tournament.id },
+        include: {
+          ...PLAYER_TOURNAMENT_INCLUDE,
+          registrations: {
+            where: { userId: data.createdByPlayerId },
+            select: PLAYER_REGISTRATION_SELECT,
+          },
+        },
+      });
     });
   }
 

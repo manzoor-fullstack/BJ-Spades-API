@@ -55,6 +55,11 @@ enum TournamentStatus {
   CANCELLED
 }
 
+enum TournamentVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 enum RegistrationStatus {
   REGISTERED
   CHECKED_IN
@@ -358,6 +363,7 @@ model User {
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
   registrations     TournamentRegistration[]
+  hostedTournaments Tournament[]             @relation("PlayerHostedTournaments")
   payouts           Payout[]
   transactions      Transaction[]
   securityAlerts    SecurityAlert[]
@@ -661,11 +667,20 @@ model Tournament {
 
   status TournamentStatus @default(SCHEDULED)
 
+  visibility       TournamentVisibility @default(PUBLIC)
+  isFeatured       Boolean              @default(false)
+  featuredSubtitle String?
+  xpMultiplier     Decimal              @default(1) @db.Decimal(4, 2)
+  featuredRewards  String[]             @default([])
+
   cancelledAt  DateTime?
   cancelReason String?
 
-  createdByAdminId String
-  createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
+  createdByAdminId String?
+  createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
+
+  createdByPlayerId String?
+  createdByPlayer   User?   @relation("PlayerHostedTournaments", fields: [createdByPlayerId], references: [id])
 
   registrations TournamentRegistration[]
   payouts       Payout[]
@@ -678,6 +693,8 @@ model Tournament {
 
   @@index([status, startsAt])
   @@index([startsAt])
+  @@index([visibility, status, startsAt])
+  @@index([createdByPlayerId, startsAt])
 }
 
 model TournamentRegistration {
