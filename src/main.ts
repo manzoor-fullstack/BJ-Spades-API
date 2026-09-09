@@ -52,6 +52,8 @@ async function bootstrap(): Promise<void> {
   const port = config.get<number>('app.port') ?? 5000;
   const nodeEnv = config.get<string>('app.nodeEnv') ?? 'development';
   const isProduction = nodeEnv === 'production';
+  const swaggerEnabled =
+    config.get<boolean>('app.swaggerEnabled') ?? !isProduction;
   const trustedProxyHops = config.get<number>('app.trustedProxyHops') ?? 0;
 
   // Express alone decides which forwarded address is trustworthy. This value
@@ -97,7 +99,7 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  if (!isProduction) {
+  if (swaggerEnabled) {
     setupSwagger(app);
   }
 
@@ -106,7 +108,7 @@ async function bootstrap(): Promise<void> {
   await app.listen(port);
 
   logger.log(`Server running on http://localhost:${port}/api`);
-  if (!isProduction) {
+  if (swaggerEnabled) {
     logger.log(`Swagger UI at http://localhost:${port}/api/docs`);
   }
 }
