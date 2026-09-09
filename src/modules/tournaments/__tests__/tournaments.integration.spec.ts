@@ -914,7 +914,7 @@ describe('Tournaments API (integration)', () => {
   });
 
   describe('POST /api/tournaments/:id/results', () => {
-    it('creates one prize obligation under concurrent result submission', async () => {
+    it('creates one prize award under concurrent result submission', async () => {
       const token = await adminToken();
       const tournament = await seedTournament(seededAdminId, {
         status: TournamentStatus.IN_PROGRESS,
@@ -937,7 +937,7 @@ describe('Tournaments API (integration)', () => {
         200, 422,
       ]);
       await expect(
-        testPrisma.payout.count({
+        testPrisma.tournamentPrizeAward.count({
           where: { tournamentId: tournament.id, userId: winner.id },
         }),
       ).resolves.toBe(1);
@@ -982,16 +982,14 @@ describe('Tournaments API (integration)', () => {
       expect(rows[0]?.placement).toBe(1);
       expect(rows[0]?.prizeWon?.toFixed(2)).toBe('750.25');
       expect(rows[1]?.placement).toBe(2);
-      // Still no money moved. Phase 6 creates a PENDING `Payout` for the prize
-      // instead — the obligation is recorded here; the balance moves only when
-      // `POST /payouts/:id/process` completes the Stripe transfer.
       const balances = await testPrisma.user.findMany({
         where: { id: { in: [winner.id, runnerUp.id] } },
         select: { balance: true },
       });
-      expect(balances.every((row) => row.balance.toFixed(2) === '0.00')).toBe(
-        true,
-      );
+      expect(balances.map((row) => row.balance.toFixed(2)).sort()).toEqual([
+        '0.00',
+        '750.25',
+      ]);
     });
 
     it('rejects prizes above the funded tournament pool', async () => {

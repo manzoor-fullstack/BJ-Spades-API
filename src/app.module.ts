@@ -30,6 +30,7 @@ import { PlayerOverviewModule } from './modules/player-overview/player-overview.
 import { LeaderboardModule } from './modules/leaderboards/leaderboard.module';
 import { PlayerWalletModule } from './modules/player-wallet/player-wallet.module';
 import { PlayerDepositsModule } from './modules/player-deposits/player-deposits.module';
+import { PlayerWithdrawalsModule } from './modules/player-withdrawals/player-withdrawals.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
 import { TaxModule } from './modules/tax/tax.module';
 import { VerificationModule } from './modules/verification/verification.module';
@@ -101,6 +102,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     PlayerWalletModule,
 
     PlayerDepositsModule,
+
+    PlayerWithdrawalsModule,
 
     MatchesModule,
 

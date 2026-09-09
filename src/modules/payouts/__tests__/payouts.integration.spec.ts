@@ -1806,7 +1806,7 @@ describe('Payouts API (integration)', () => {
       );
     });
 
-    it('submitting results creates a payout row per prize and moves no money', async () => {
+    it('submitting results credits each prize to the wallet without creating an external payout', async () => {
       const [winner, runnerUp, alsoRan] = await Promise.all([
         seedUser(),
         seedUser(),
@@ -1840,35 +1840,41 @@ describe('Payouts API (integration)', () => {
         })
         .expect(200);
 
-      const payouts = await testPrisma.payout.findMany({
+      await expect(
+        testPrisma.payout.count({ where: { tournamentId: tournament.id } }),
+      ).resolves.toBe(0);
+      const awards = await testPrisma.tournamentPrizeAward.findMany({
         where: { tournamentId: tournament.id },
         orderBy: { placement: 'asc' },
       });
+      expect(awards).toHaveLength(2);
+      expect(awards[0]?.amount.toFixed(2)).toBe('750.25');
+      expect(awards[1]?.amount.toFixed(2)).toBe('250.00');
 
-      // Third place won nothing, so nothing is owed and no payout exists.
-      expect(payouts).toHaveLength(2);
-      expect(payouts[0]).toMatchObject({
-        userId: winner.id,
-        placement: 1,
-        status: PayoutStatus.PENDING,
-      });
-      expect(payouts[0]?.amount.toFixed(2)).toBe('750.25');
-      expect(payouts[1]?.amount.toFixed(2)).toBe('250.00');
-
-      // The registration points at its payout.
       const registration =
         await testPrisma.tournamentRegistration.findFirstOrThrow({
           where: { tournamentId: tournament.id, userId: winner.id },
         });
 
-      expect(registration.payoutId).toBe(payouts[0]?.id);
+      expect(registration.payoutId).toBeNull();
+      await expect(balanceOf(winner.id)).resolves.toBe('750.25');
+      await expect(balanceOf(runnerUp.id)).resolves.toBe('250.00');
+      await expect(testPrisma.transaction.count()).resolves.toBe(2);
 
-      // Results record what is owed; the money moves at /process.
-      await expect(balanceOf(winner.id)).resolves.toBe('0.00');
-      await expect(testPrisma.transaction.count()).resolves.toBe(0);
+      const distribution = await request(server())
+        .get(
+          `/api/payouts/prize-distribution?tournamentId=${tournament.id}&currency=usd`,
+        )
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(
+        (distribution.body as { data: Array<{ status: string }> }).data.map(
+          (row) => row.status,
+        ),
+      ).toEqual(['SENT', 'SENT', 'NOT_STARTED']);
     });
 
-    it('results through to a paid payout keeps the ledger balanced end to end', async () => {
+    it('entry fee and wallet prize stay balanced without an automatic provider payout', async () => {
       const winner = await seedFundedUser(transactions, '100.00');
       const tournament = await seedTournament(seededAdminId, {
         status: TournamentStatus.REGISTERING,
@@ -1895,22 +1901,10 @@ describe('Payouts API (integration)', () => {
         })
         .expect(200);
 
-      const payout = await testPrisma.payout.findFirstOrThrow({
-        where: { tournamentId: tournament.id },
-      });
-
-      await request(server())
-        .post(`/api/payouts/${payout.id}/approve`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      await request(server())
-        .post(`/api/payouts/${payout.id}/process`)
-        .set('Authorization', `Bearer ${token}`)
-        .expect(200);
-
-      // The entry fee is paid from the wallet; the prize is paid externally.
-      await expect(balanceOf(winner.id)).resolves.toBe('75.00');
+      await expect(
+        testPrisma.payout.count({ where: { tournamentId: tournament.id } }),
+      ).resolves.toBe(0);
+      await expect(balanceOf(winner.id)).resolves.toBe('575.00');
       await expect(
         transactions.verifyLedgerIntegrity(winner.id),
       ).resolves.toMatchObject({ balanced: true });

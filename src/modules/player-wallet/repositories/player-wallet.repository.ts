@@ -28,7 +28,7 @@ export class PlayerWalletRepository {
       affectsBalance: true,
     };
 
-    const [user, groups, weekly, pending] = await Promise.all([
+    const [user, groups, weekly, pending, legacyPending] = await Promise.all([
       this.prisma.user.findFirst({
         where: { id: userId, deletedAt: null },
         select: { balance: true },
@@ -42,11 +42,24 @@ export class PlayerWalletRepository {
         where: { ...settledWhere, createdAt: { gte: since } },
         _sum: { amount: true },
       }),
+      this.prisma.withdrawalRequest.aggregate({
+        where: {
+          userId,
+          releaseTransactionId: null,
+          payout: {
+            status: {
+              notIn: ['PAID', 'FAILED', 'CANCELLED'],
+            },
+          },
+        },
+        _sum: { amount: true },
+      }),
       this.prisma.transaction.aggregate({
         where: {
           userId,
           type: TransactionType.WITHDRAWAL,
           status: TransactionStatus.PENDING,
+          withdrawalReservation: null,
         },
         _sum: { amount: true },
       }),
@@ -63,7 +76,9 @@ export class PlayerWalletRepository {
         ]),
       ),
       weeklyChange: weekly._sum.amount ?? new Prisma.Decimal(0),
-      pendingWithdrawal: pending._sum.amount ?? new Prisma.Decimal(0),
+      pendingWithdrawal: (pending._sum.amount ?? new Prisma.Decimal(0)).plus(
+        (legacyPending._sum.amount ?? new Prisma.Decimal(0)).abs(),
+      ),
     };
   }
 

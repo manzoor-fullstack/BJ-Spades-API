@@ -132,6 +132,13 @@ enum PayoutStatus {
   CANCELLED
 }
 
+enum WithdrawalRequestStatus {
+  PENDING_REVIEW
+  APPROVED
+  DECLINED
+  CANCELLED
+}
+
 enum PayoutMethod {
   STRIPE_CONNECT
   MANUAL
@@ -433,6 +440,7 @@ model User {
   playerSessions        PlayerSession[]
   deposits              Deposit[]
   paymentMethods        PlayerPaymentMethod[]
+  withdrawalRequests    WithdrawalRequest[]
   playerEmailTokens     PlayerEmailToken[]
   oauthAccounts         PlayerOAuthAccount[]
   playerProfile         PlayerProfile?
@@ -1193,6 +1201,11 @@ model Payout {
   /// payouts; unique when results create it, preventing concurrent duplicates.
   tournamentResultKey String? @unique
 
+  /// Present only when this provider settlement was created from wallet funds.
+  /// Tournament prizes are credited to the wallet first and never populate it.
+  withdrawalRequestId String?            @unique
+  withdrawalRequest   WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id])
+
   stripeTransferId String? @unique
   failureReason    String?
   blockerReason    String? // "KYC incomplete", "Wallet unverified"
@@ -1254,6 +1267,8 @@ model Transaction {
 
   tournamentPrizeCredit   TournamentPrizeAward? @relation("TournamentPrizeCredit")
   tournamentPrizeReversal TournamentPrizeAward? @relation("TournamentPrizeReversal")
+  withdrawalReservation   WithdrawalRequest?    @relation("WithdrawalReservation")
+  withdrawalRelease       WithdrawalRequest?    @relation("WithdrawalRelease")
 
   createdAt DateTime @default(now())
 
@@ -1600,12 +1615,56 @@ model PayoutMethodAccount {
   /// Where a player has several, the one used by default.
   isDefault Boolean @default(false)
 
+  withdrawals WithdrawalRequest[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   /// One account per rail per player.
   @@unique([userId, method])
   @@index([userId])
+}
+
+/// A player's request to move already-credited wallet funds to a verified
+/// destination. The linked Payout is the separate provider settlement state
+/// machine; this record owns review, reservation and release semantics.
+model WithdrawalRequest {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  requestId   String
+  payloadHash String
+  amount      Decimal @db.Decimal(18, 2)
+  currency    String  @default("usd")
+
+  destinationId        String
+  destination          PayoutMethodAccount @relation(fields: [destinationId], references: [id])
+  destinationMethod    PayoutMethod
+  destinationLabel     String?
+  destinationReference String
+
+  status       WithdrawalRequestStatus @default(PENDING_REVIEW)
+  reviewReason String?
+  approvedAt   DateTime?
+  declinedAt   DateTime?
+  cancelledAt  DateTime?
+
+  payout Payout?
+
+  reservationTransactionId String       @unique
+  reservationTransaction   Transaction  @relation("WithdrawalReservation", fields: [reservationTransactionId], references: [id])
+  releaseTransactionId     String?      @unique
+  releaseTransaction       Transaction? @relation("WithdrawalRelease", fields: [releaseTransactionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, requestId])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([destinationId])
 }
 
 enum TaxDocumentKind {

@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
   Prisma,
-  PayoutStatus,
+  DisputeStatus,
   RegistrationStatus,
+  TournamentPrizeAwardStatus,
   TournamentStatus,
   TransactionType,
 } from '@prisma/client';
@@ -186,6 +187,8 @@ interface LockedTournamentRow {
   status: TournamentStatus;
   maxPlayers: number;
   entryFee: Money;
+  name: string;
+  settlementVersion: number;
 }
 
 /**
@@ -688,19 +691,17 @@ export class TournamentsRepository {
   }
 
   /**
-   * Writes every placement, creates a payout for every prize, and flips the
+   * Writes every placement, credits every eligible prize, and flips the
    * tournament to COMPLETED — atomically.
    *
    * One transaction because a half-applied result set is worse than none: a
    * COMPLETED tournament missing its winner, placements recorded against a
    * tournament still shown as in progress, or — since Phase 6 — a prize
-   * recorded on a registration with no payout row behind it.
+   * recorded on a registration with no durable award behind it.
    *
-   * Deliberately no balance movement here. Submitting results creates the
-   * *obligation* (a PENDING payout); the money moves in
-   * `POST /payouts/:id/process`, once an admin has approved it and Stripe has
-   * accepted the transfer. Crediting at this point would pay every winner
-   * automatically the moment a bracket was typed in.
+   * Prize winnings always enter the wallet. Moving wallet funds to an external
+   * provider is a separate, player-initiated withdrawal, so the same prize can
+   * never be both spendable and independently paid by the admin payout queue.
    */
   async submitResults(
     tournamentId: string,
@@ -708,7 +709,7 @@ export class TournamentsRepository {
   ): Promise<SubmitResultsOutcome> {
     return this.prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw<LockedTournamentRow[]>`
-        SELECT "status", "maxPlayers", "entryFee"
+        SELECT "status", "maxPlayers", "entryFee", "name", "settlementVersion"
         FROM "Tournament"
         WHERE "id" = ${tournamentId}
         FOR UPDATE
@@ -718,42 +719,75 @@ export class TournamentsRepository {
       if (tournament.status !== TournamentStatus.IN_PROGRESS) {
         return { outcome: 'INVALID_STATUS', status: tournament.status };
       }
+      const settlementVersion = Math.max(1, tournament.settlementVersion);
 
       for (const result of results) {
         const prize = result.prizeWon ? toMoney(result.prizeWon) : null;
 
-        // A placement without a prize (everyone below the paid places) gets a
-        // recorded result and no payout — there is nothing owed.
-        const payout =
-          prize && prize.greaterThan(0)
-            ? await tx.payout.create({
-                data: {
-                  userId: result.userId,
-                  amount: prize,
-                  tournamentId,
-                  placement: result.placement,
-                  status: PayoutStatus.PENDING,
-                  owedSince: new Date(),
-                  tournamentResultKey: `${tournamentId}:${result.userId}`,
-                },
-              })
-            : null;
-
-        await tx.tournamentRegistration.update({
+        const registration = await tx.tournamentRegistration.update({
           where: {
             tournamentId_userId: { tournamentId, userId: result.userId },
           },
           data: {
             placement: result.placement,
             prizeWon: result.prizeWon,
-            ...(payout ? { payoutId: payout.id } : {}),
           },
         });
+
+        if (prize && prize.greaterThan(0)) {
+          const held = await tx.dispute.findFirst({
+            where: {
+              userId: result.userId,
+              status: {
+                in: [DisputeStatus.UNDER_REVIEW, DisputeStatus.APPEAL_FILED],
+              },
+            },
+            select: { caseNumber: true },
+          });
+          if (held) {
+            await tx.tournamentPrizeAward.create({
+              data: {
+                tournamentId,
+                registrationId: registration.id,
+                userId: result.userId,
+                placement: result.placement,
+                amount: prize,
+                settlementVersion,
+                status: TournamentPrizeAwardStatus.HELD,
+                holdReason: `Dispute ${held.caseNumber} is pending.`,
+              },
+            });
+          } else {
+            const ledger = await recordLedgerEntry(tx, {
+              userId: result.userId,
+              type: TransactionType.PRIZE,
+              amount: prize,
+              reference: `tournament_prize:${tournamentId}:${result.userId}:v${settlementVersion}`,
+              description: `${tournament.name} - ${result.placement === 1 ? '1st' : '2nd'} Place`,
+              tournamentId,
+            });
+            if (ledger.outcome !== 'RECORDED') {
+              throw new Error(`Prize ledger write failed: ${ledger.outcome}`);
+            }
+            await tx.tournamentPrizeAward.create({
+              data: {
+                tournamentId,
+                registrationId: registration.id,
+                userId: result.userId,
+                placement: result.placement,
+                amount: prize,
+                settlementVersion,
+                status: TournamentPrizeAwardStatus.CREDITED,
+                transactionId: ledger.transaction.id,
+              },
+            });
+          }
+        }
       }
 
       const completed = await tx.tournament.update({
         where: { id: tournamentId },
-        data: { status: TournamentStatus.COMPLETED },
+        data: { status: TournamentStatus.COMPLETED, settlementVersion },
         include: TOURNAMENT_INCLUDE,
       });
 

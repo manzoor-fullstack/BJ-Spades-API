@@ -7,6 +7,7 @@ import {
   TournamentStatus,
   TransactionStatus,
   TransactionType,
+  WithdrawalRequestStatus,
   WebhookEventStatus,
 } from '@prisma/client';
 import type { Transaction, User } from '@prisma/client';
@@ -20,6 +21,7 @@ import {
 } from '../serializers/payout-history.serializer';
 import type { PayoutTrackerStats } from '../serializers/payout-tracker.serializer';
 import type { PayoutTournamentOption } from '../serializers/prize-distribution.serializer';
+import { recordLedgerEntry } from '../../transactions/repositories/transactions.repository';
 import type { LedgerEntryInput } from '../../transactions/repositories/transactions.repository';
 
 /**
@@ -41,6 +43,15 @@ const PAYOUT_INCLUDE = {
     },
   },
   tournament: { select: { id: true, name: true } },
+  withdrawalRequest: {
+    select: {
+      id: true,
+      status: true,
+      destinationReference: true,
+      reservationTransactionId: true,
+      releaseTransactionId: true,
+    },
+  },
 } satisfies Prisma.PayoutInclude;
 
 export type PayoutWithRelations = Prisma.PayoutGetPayload<{
@@ -66,6 +77,11 @@ const DISTRIBUTION_INCLUDE = {
   },
   tournament: { select: { id: true, name: true } },
   payout: { select: { id: true, status: true, currency: true } },
+  prizeAwards: {
+    select: { status: true, settlementVersion: true },
+    orderBy: { settlementVersion: 'desc' as const },
+    take: 1,
+  },
 } satisfies Prisma.TournamentRegistrationInclude;
 
 export type RegistrationWithPayout = Prisma.TournamentRegistrationGetPayload<{
@@ -440,7 +456,14 @@ export class PayoutsRepository {
       where: {
         tournamentId,
         placement: { not: null },
-        ...(currency ? { payout: { currency } } : {}),
+        ...(currency
+          ? {
+              OR: [
+                { payout: { currency } },
+                ...(currency.toLowerCase() === 'usd' ? [{ payout: null }] : []),
+              ],
+            }
+          : {}),
       },
       include: DISTRIBUTION_INCLUDE,
       orderBy: [{ placement: 'asc' }, { id: 'asc' }],
@@ -483,20 +506,33 @@ export class PayoutsRepository {
     adminId: string,
     from: readonly PayoutStatus[],
   ): Promise<number> {
-    const result = await this.prisma.payout.updateMany({
-      where: { id, status: { in: [...from] } },
-      data: {
-        status: PayoutStatus.APPROVED,
-        approvedAt: new Date(),
-        approvedByAdminId: adminId,
-        // Approval clears whatever was holding it; a new block must be a new
-        // decision, not a stale string on a now-approved row.
-        blockerReason: null,
-        failureReason: null,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const result = await tx.payout.updateMany({
+        where: { id, status: { in: [...from] } },
+        data: {
+          status: PayoutStatus.APPROVED,
+          approvedAt: now,
+          approvedByAdminId: adminId,
+          blockerReason: null,
+          failureReason: null,
+        },
+      });
+      if (result.count === 1) {
+        await tx.withdrawalRequest.updateMany({
+          where: {
+            payout: { id },
+            status: WithdrawalRequestStatus.PENDING_REVIEW,
+          },
+          data: {
+            status: WithdrawalRequestStatus.APPROVED,
+            approvedAt: now,
+            reviewReason: null,
+          },
+        });
+      }
+      return result.count;
     });
-
-    return result.count;
   }
 
   async cancel(
@@ -504,12 +540,45 @@ export class PayoutsRepository {
     reason: string,
     from: readonly PayoutStatus[],
   ): Promise<number> {
-    const result = await this.prisma.payout.updateMany({
-      where: { id, status: { in: [...from] } },
-      data: { status: PayoutStatus.CANCELLED, blockerReason: reason },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.payout.updateMany({
+        where: { id, status: { in: [...from] } },
+        data: { status: PayoutStatus.CANCELLED, blockerReason: reason },
+      });
+      if (result.count !== 1) return result.count;
 
-    return result.count;
+      const withdrawal = await tx.withdrawalRequest.findFirst({
+        where: { payout: { id }, releaseTransactionId: null },
+      });
+      if (!withdrawal) return result.count;
+
+      const release = await recordLedgerEntry(tx, {
+        userId: withdrawal.userId,
+        type: TransactionType.REFUND,
+        amount: withdrawal.amount,
+        status: TransactionStatus.COMPLETED,
+        reference: `withdrawal-release:${withdrawal.id}`,
+        payoutId: id,
+        description: 'Declined withdrawal reservation released',
+      });
+      if (release.outcome !== 'RECORDED') {
+        throw new PayoutLedgerError(`WITHDRAWAL_RELEASE_${release.outcome}`);
+      }
+      await tx.withdrawalRequest.update({
+        where: { id: withdrawal.id },
+        data: {
+          status: WithdrawalRequestStatus.DECLINED,
+          reviewReason: reason,
+          declinedAt: new Date(),
+          releaseTransactionId: release.transaction.id,
+        },
+      });
+      await tx.transaction.update({
+        where: { id: withdrawal.reservationTransactionId },
+        data: { status: TransactionStatus.REVERSED },
+      });
+      return result.count;
+    });
   }
 
   /**
@@ -594,8 +663,7 @@ export class PayoutsRepository {
           tx.transaction.findFirst({
             where: {
               payoutId: input.payoutId,
-              type: TransactionType.PRIZE,
-              reference: input.ledger.reference,
+              type: { in: [TransactionType.PRIZE, TransactionType.WITHDRAWAL] },
             },
           }),
         ]);
@@ -612,6 +680,21 @@ export class PayoutsRepository {
         }
 
         throw new PayoutLedgerError('PAYOUT_NOT_PROCESSABLE');
+      }
+
+      const withdrawal = await tx.withdrawalRequest.findFirst({
+        where: { payout: { id: input.payoutId } },
+      });
+      if (withdrawal) {
+        const transaction = await tx.transaction.update({
+          where: { id: withdrawal.reservationTransactionId },
+          data: { status: TransactionStatus.COMPLETED },
+        });
+        const payout = await tx.payout.findUniqueOrThrow({
+          where: { id: input.payoutId },
+          include: PAYOUT_INCLUDE,
+        });
+        return { outcome: 'PAID' as const, payout, transaction };
       }
 
       const owner = await tx.user.findUnique({
@@ -685,6 +768,35 @@ export class PayoutsRepository {
     });
   }
 
+  async syncStripeDestination(
+    userId: string,
+    accountId: string,
+    verified: boolean,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const existingMethods = await tx.payoutMethodAccount.count({
+        where: { userId },
+      });
+      return tx.payoutMethodAccount.upsert({
+        where: {
+          userId_method: { userId, method: PayoutMethod.STRIPE_CONNECT },
+        },
+        create: {
+          userId,
+          method: PayoutMethod.STRIPE_CONNECT,
+          label: 'Stripe Connect',
+          reference: accountId,
+          isVerified: verified,
+          isDefault: existingMethods === 0,
+        },
+        update: {
+          reference: accountId,
+          isVerified: verified,
+        },
+      });
+    });
+  }
+
   /** Webhook path: the account id is all Stripe gives us to match on. */
   /**
    * Records Stripe's verdict on a connected account.
@@ -712,6 +824,18 @@ export class PayoutsRepository {
       });
     }
 
+    const user = await this.prisma.user.findUnique({
+      where: { stripeConnectAccountId: accountId },
+      select: { id: true },
+    });
+    if (user) {
+      await this.syncStripeDestination(
+        user.id,
+        accountId,
+        status === StripeAccountStatus.VERIFIED,
+      );
+    }
+
     return result.count;
   }
 
@@ -724,7 +848,7 @@ export class PayoutsRepository {
    */
   async markSettled(stripeTransferId: string): Promise<number> {
     const result = await this.prisma.payout.updateMany({
-      where: { stripeTransferId, settledAt: null },
+      where: { stripeTransferId, status: PayoutStatus.PAID, settledAt: null },
       data: { settledAt: new Date() },
     });
 
@@ -756,6 +880,36 @@ export class PayoutsRepository {
       });
 
       if (result.count > 0) {
+        const withdrawal = await tx.withdrawalRequest.findFirst({
+          where: { payout: { id }, releaseTransactionId: null },
+        });
+        if (withdrawal) {
+          const release = await recordLedgerEntry(tx, {
+            userId: withdrawal.userId,
+            type: TransactionType.REFUND,
+            amount: withdrawal.amount,
+            status: TransactionStatus.COMPLETED,
+            reference: `withdrawal-release:${withdrawal.id}`,
+            payoutId: id,
+            description: 'Failed withdrawal reservation released',
+          });
+          if (release.outcome !== 'RECORDED') {
+            throw new PayoutLedgerError(
+              `WITHDRAWAL_RELEASE_${release.outcome}`,
+            );
+          }
+          await tx.withdrawalRequest.update({
+            where: { id: withdrawal.id },
+            data: {
+              reviewReason: reason.slice(0, 500),
+              releaseTransactionId: release.transaction.id,
+            },
+          });
+          await tx.transaction.update({
+            where: { id: withdrawal.reservationTransactionId },
+            data: { status: TransactionStatus.REVERSED },
+          });
+        }
         await tx.transaction.updateMany({
           where: { payoutId: id, affectsBalance: false },
           data: { status: TransactionStatus.FAILED },

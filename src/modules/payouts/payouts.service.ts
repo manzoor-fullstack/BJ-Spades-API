@@ -449,7 +449,9 @@ export class PayoutsService {
       throw new UnprocessableEntityException(PROCESS_ERRORS.NOT_APPROVED);
     }
 
-    const destination = payout.user.stripeConnectAccountId;
+    const destination =
+      payout.withdrawalRequest?.destinationReference ??
+      payout.user.stripeConnectAccountId;
 
     if (!destination) {
       await this.repository.releaseAfterFailure(
@@ -598,6 +600,46 @@ export class PayoutsService {
 
     const refreshed = await this.repository.findUserById(userId);
 
+    return {
+      userId,
+      stripeConnectAccountId: accountId,
+      stripeAccountStatus:
+        refreshed?.stripeAccountStatus ?? StripeAccountStatus.PENDING,
+      url: link.url,
+      expiresAt: new Date(link.expiresAt * 1000),
+    };
+  }
+
+  async createPlayerOnboardingLink(
+    userId: string,
+  ): Promise<StripeOnboardingLink> {
+    const user = await this.repository.findUserById(userId);
+    if (!user || user.deletedAt)
+      throw new NotFoundException('Player not found.');
+    if (!this.stripe.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Stripe is not configured. Payout onboarding will be available when the provider is connected.',
+      );
+    }
+    const accountId = await this.ensureConnectAccount(user);
+    const refreshed = await this.repository.findUserById(userId);
+    await this.repository.syncStripeDestination(
+      userId,
+      accountId,
+      refreshed?.stripeAccountStatus === StripeAccountStatus.VERIFIED,
+    );
+    const appUrl = this.config.get<string>('playerAuth.appUrl');
+    if (!appUrl) throw new Error('PLAYER_APP_URL is not configured.');
+    const returnUrl = new URL(appUrl);
+    returnUrl.pathname = '/wallet';
+    returnUrl.searchParams.set('payout_onboarding', 'return');
+    const refreshUrl = new URL(returnUrl);
+    refreshUrl.searchParams.set('payout_onboarding', 'refresh');
+    const link = await this.stripe.createAccountLink({
+      accountId,
+      refreshUrl: refreshUrl.toString(),
+      returnUrl: returnUrl.toString(),
+    });
     return {
       userId,
       stripeConnectAccountId: accountId,

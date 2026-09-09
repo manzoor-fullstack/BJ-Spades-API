@@ -25,6 +25,8 @@ function payoutFixture(
     status: PayoutStatus.APPROVED,
     tournamentId: null,
     tournamentResultKey: null,
+    withdrawalRequestId: null,
+    withdrawalRequest: null,
     placement: null,
     stripeTransferId: null,
     failureReason: null,
