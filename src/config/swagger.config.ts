@@ -4,8 +4,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 /**
  * Mounts Swagger UI at /api/docs.
  *
- * Never called in production — the route would expose the full API surface,
- * including which endpoints exist and what they accept.
+ * Production deployments must opt in through SWAGGER_ENABLED because the
+ * route exposes the full API surface, including accepted request shapes.
  */
 export function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
