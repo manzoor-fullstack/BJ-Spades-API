@@ -102,4 +102,4 @@ jobs:
       - name: Integration tests
         # .env.test is committed and already points at localhost:5434,
         # which matches the service container mapping above.
-        run: pnpm run test:integration --passWithNoTests
+        run: pnpm run test:integration

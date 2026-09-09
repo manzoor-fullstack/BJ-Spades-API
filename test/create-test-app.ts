@@ -55,6 +55,11 @@ export async function createTestApp(
 
   const app = moduleRef.createNestApplication<NestExpressApplication>();
 
+  app.set(
+    'trust proxy',
+    Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10),
+  );
+
   // Must come before app.init(), exactly as in main.ts: init() is where Nest
   // installs its own JSON parser, and whichever parser is registered first is
   // the one that sees the unparsed bytes. Omitting this here would make the

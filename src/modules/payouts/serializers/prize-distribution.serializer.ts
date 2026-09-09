@@ -99,6 +99,19 @@ export function toPrizeDistributionRow(
   registration: RegistrationWithPayout,
 ): PrizeDistributionRow {
   const payout = registration.payout;
+  const walletAward = registration.prizeAwards[0];
+  const status = payout
+    ? deriveDistributionStatus(
+        payout.status,
+        registration.user.stripeAccountStatus,
+      )
+    : walletAward?.status === 'CREDITED'
+      ? 'SENT'
+      : walletAward?.status === 'HELD'
+        ? 'PENDING_REVIEW'
+        : walletAward?.status === 'REVERSED'
+          ? 'CANCELLED'
+          : 'NOT_STARTED';
 
   return {
     registrationId: registration.id,
@@ -123,9 +136,6 @@ export function toPrizeDistributionRow(
     currency: payout?.currency ?? 'usd',
     payoutId: payout?.id ?? null,
     payoutStatus: payout?.status ?? null,
-    status: deriveDistributionStatus(
-      payout?.status ?? null,
-      registration.user.stripeAccountStatus,
-    ),
+    status,
   };
 }

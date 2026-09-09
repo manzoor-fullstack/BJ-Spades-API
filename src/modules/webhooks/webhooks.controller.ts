@@ -19,9 +19,12 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ActivityCategory } from '@prisma/client';
 import type { Request } from 'express';
 
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import { PERMISSION_CODES } from '../../common/constants/permissions';
+import { AuditLog } from '../../common/decorators/audit-log.decorator';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 
@@ -106,6 +109,13 @@ export class WebhooksController {
 
   @ApiBearerAuth('access-token')
   @RequirePermissions(PERMISSION_CODES.SECURITY_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.WEBHOOK,
+    action: ACTIVITY_ACTIONS.WEBHOOK_RETRIED.code,
+    title: (ctx) => `Webhook event ${ctx.params.id ?? 'event'} retried`,
+    entityType: 'WebhookEvent',
+    entityId: (ctx) => ctx.params.id,
+  })
   @HttpCode(HttpStatus.OK)
   @Post('events/:id/retry')
   @ApiOperation({ summary: 'Reprocess a stored webhook payload.' })

@@ -37,6 +37,7 @@ import { ImageUploadInterceptor } from '../storage/image-upload.interceptor';
 import type { ValidatableUpload } from '../storage/image-validation';
 
 import { CancelTournamentDto } from './dto/cancel-tournament.dto';
+import { CorrectTournamentResultsDto } from './dto/correct-tournament-results.dto';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { QueryTournamentsDto } from './dto/query-tournaments.dto';
 import { RegisterPlayerDto } from './dto/register-player.dto';
@@ -262,5 +263,27 @@ export class TournamentsController {
     @Body() submitResultsDto: SubmitResultsDto,
   ) {
     return this.tournamentsService.submitResults(id, submitResultsDto);
+  }
+
+  @RequirePermissions(PERMISSION_CODES.TOURNAMENTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.TOURNAMENT,
+    action: ACTIVITY_ACTIONS.TOURNAMENT_RESULTS_CORRECTED.code,
+    title: (ctx) => `Results corrected for tournament ${ctx.params.id}`,
+    entityType: 'Tournament',
+    entityId: (ctx) => ctx.params.id,
+    metadata: (ctx) => ({ submitted: ctx.body }),
+  })
+  @Post(':id/results/corrections')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Reverse and replace an authoritative tournament settlement with an audited reason',
+  })
+  correctResults(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CorrectTournamentResultsDto,
+  ) {
+    return this.tournamentsService.correctResults(id, dto);
   }
 }

@@ -4,7 +4,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { TournamentStatus, UserStatus } from '@prisma/client';
+import { Prisma, TournamentStatus, UserStatus } from '@prisma/client';
 
 import {
   buildPaginationMeta,
@@ -20,12 +20,14 @@ import { MediaService } from '../storage/media.service';
 import { UsersRepository } from '../users/repositories/users.repository';
 
 import { CancelTournamentDto } from './dto/cancel-tournament.dto';
+import { CorrectTournamentResultsDto } from './dto/correct-tournament-results.dto';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { QueryTournamentsDto } from './dto/query-tournaments.dto';
 import { RegisterPlayerDto } from './dto/register-player.dto';
 import { SubmitResultsDto } from './dto/submit-results.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { TournamentsRepository } from './repositories/tournaments.repository';
+import { TournamentProgressionService } from './tournament-progression.service';
 import type {
   CreateTournamentData,
   ListTournamentsArgs,
@@ -89,6 +91,7 @@ export class TournamentsService {
     private readonly repository: TournamentsRepository,
     private readonly usersRepository: UsersRepository,
     private readonly media: MediaService,
+    private readonly progression: TournamentProgressionService,
   ) {}
 
   async findAll(
@@ -214,9 +217,12 @@ export class TournamentsService {
       data.startsAt = combineStartsAt(dto.startDate, dto.startTime);
     }
 
+    const startsBracket =
+      dto.status === TournamentStatus.IN_PROGRESS &&
+      existing.status !== TournamentStatus.IN_PROGRESS;
     if (dto.status !== undefined) {
       assertTransitionAllowed(existing.status, dto.status);
-      data.status = dto.status;
+      if (!startsBracket) data.status = dto.status;
     }
 
     // Uploaded before the update so a rejected image never half-applies the
@@ -242,6 +248,11 @@ export class TournamentsService {
       // Only once the row points at the replacement: deleting first would leave
       // a broken image if the update failed.
       await this.media.deleteAsset(existing.imageId);
+    }
+
+    if (startsBracket) {
+      await this.progression.start(id);
+      updated = await this.getOrThrow(id);
     }
 
     return toTournamentDetail(updated);
@@ -383,9 +394,21 @@ export class TournamentsService {
       );
     }
 
-    await this.repository.deleteRegistration(id, userId);
+    const result = await this.repository.withdrawRegistration(id, userId);
 
-    return toRegistrationItem(registration);
+    if (result.outcome === 'NOT_FOUND') {
+      throw new NotFoundException(
+        `User ${userId} is not registered for tournament ${id}`,
+      );
+    }
+
+    if (result.outcome === 'COMPLETED') {
+      throw new UnprocessableEntityException(
+        'Players cannot be removed from a completed tournament.',
+      );
+    }
+
+    return toRegistrationItem(result.registration);
   }
 
   async submitResults(
@@ -393,6 +416,12 @@ export class TournamentsService {
     dto: SubmitResultsDto,
   ): Promise<TournamentDetail> {
     const tournament = await this.getOrThrow(id);
+
+    if (tournament.bracketStartedAt) {
+      throw new UnprocessableEntityException(
+        'Authoritative tournament results are produced by completed game matches.',
+      );
+    }
 
     assertStatusChange(tournament.status, TournamentStatus.COMPLETED);
 
@@ -409,6 +438,16 @@ export class TournamentsService {
     if (new Set(placements).size !== placements.length) {
       throw new UnprocessableEntityException(
         'Each placement may be awarded only once.',
+      );
+    }
+
+    const submittedPrize = dto.results.reduce(
+      (sum, result) => sum.plus(result.prizeWon ?? 0),
+      new Prisma.Decimal(0),
+    );
+    if (submittedPrize.greaterThan(tournament.prizePool)) {
+      throw new UnprocessableEntityException(
+        `Submitted prizes exceed the funded ${formatMoney(tournament.prizePool)} prize pool.`,
       );
     }
 
@@ -439,7 +478,29 @@ export class TournamentsService {
     // the registration. Balances are still untouched — submitting results
     // records what is *owed*; the money moves in `POST /payouts/:id/process`,
     // after an admin approves it and Stripe accepts the transfer.
-    return toTournamentDetail(await this.repository.submitResults(id, rows));
+    const result = await this.repository.submitResults(id, rows);
+
+    if (result.outcome === 'NOT_FOUND') {
+      throw new NotFoundException(`Tournament ${id} not found`);
+    }
+
+    if (result.outcome === 'INVALID_STATUS') {
+      throw new UnprocessableEntityException(
+        `Results cannot be submitted while the tournament is ${result.status}.`,
+      );
+    }
+
+    return toTournamentDetail(result.tournament);
+  }
+
+  correctResults(id: string, dto: CorrectTournamentResultsDto) {
+    return this.progression.correctResults(
+      id,
+      dto.championUserIds,
+      dto.runnerUpUserIds,
+      dto.reason.trim(),
+      dto.requestId,
+    );
   }
 
   private buildListArgs(query: QueryTournamentsDto): ListTournamentsArgs {

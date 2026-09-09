@@ -76,6 +76,7 @@ const BASE_USER: User = {
   webhookEventId: null,
   // Added by the Phase 6 schema; a Prisma `User` now includes these.
   stripeConnectAccountId: null,
+  stripeCustomerId: null,
   stripeAccountStatus: StripeAccountStatus.NOT_CONNECTED,
   stripeVerifiedAt: null,
   deletedAt: null,
@@ -890,7 +891,7 @@ describe('UsersService', () => {
         suspended: 37,
         pending: 12,
         newThisMonth: 124,
-        bySource: { ADMIN: 340, WEBHOOK: 2507 },
+        bySource: { ADMIN: 340, WEBHOOK: 2507, PLAYER: 0 },
         byTier: { PLAYER: 2100, PREMIUM: 600, VIP: 147 },
       });
     });
@@ -902,7 +903,7 @@ describe('UsersService', () => {
         suspended: 0,
         pending: 0,
         newThisMonth: 0,
-        bySource: { ADMIN: 0, WEBHOOK: 0 },
+        bySource: { ADMIN: 0, WEBHOOK: 0, PLAYER: 0 },
         byTier: { PLAYER: 0, PREMIUM: 0, VIP: 0 },
       });
     });

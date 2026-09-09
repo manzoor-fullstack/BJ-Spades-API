@@ -17,7 +17,9 @@ import { PrismaService } from '../../prisma/prisma.service';
  */
 const MERCHANDISE_INCLUDE = {
   image: true,
-  variants: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+  variants: {
+    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+  },
 } satisfies Prisma.MerchandiseInclude;
 
 export type MerchandiseWithRelations = Prisma.MerchandiseGetPayload<{
@@ -189,10 +191,10 @@ export class MerchandiseRepository {
       const merchandise = await this.prisma.$transaction(async (tx) => {
         const created = await tx.merchandise.create({ data });
 
-        for (const variant of variants) {
+        for (const [position, variant] of variants.entries()) {
           try {
             await tx.merchandiseVariant.create({
-              data: { merchandiseId: created.id, ...variant },
+              data: { merchandiseId: created.id, position, ...variant },
             });
           } catch (error) {
             if (isUniqueViolation(error)) {
@@ -271,11 +273,25 @@ export class MerchandiseRepository {
     variant: VariantInput,
   ): Promise<VariantWriteOutcome> {
     try {
+      const created = await this.prisma.$transaction(async (tx) => {
+        // Serialise additions per product so two concurrent requests cannot
+        // choose the same display position.
+        await tx.$queryRaw`SELECT "id" FROM "Merchandise" WHERE "id" = ${merchandiseId} FOR UPDATE`;
+        const last = await tx.merchandiseVariant.aggregate({
+          where: { merchandiseId },
+          _max: { position: true },
+        });
+        return tx.merchandiseVariant.create({
+          data: {
+            merchandiseId,
+            position: (last._max.position ?? -1) + 1,
+            ...variant,
+          },
+        });
+      });
       return {
         outcome: 'OK',
-        variant: await this.prisma.merchandiseVariant.create({
-          data: { merchandiseId, ...variant },
-        }),
+        variant: created,
       };
     } catch (error) {
       if (isUniqueViolation(error)) {

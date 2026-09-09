@@ -293,15 +293,24 @@ export class AuthRepository {
   async rotateRefreshToken(params: {
     currentTokenId: string;
     next: CreateRefreshTokenData;
-  }) {
+  }): Promise<boolean> {
     const { currentTokenId, next } = params;
 
     return this.prisma.$transaction(async (tx) => {
+      // Compare-and-swap the live token first. Only one concurrent request can
+      // change revokedAt from null, so only that request may mint a successor.
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: currentTokenId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      if (claimed.count !== 1) return false;
+
       const created = await tx.refreshToken.create({ data: next });
 
       await tx.refreshToken.update({
         where: { id: currentTokenId },
-        data: { revokedAt: new Date(), replacedByTokenId: created.id },
+        data: { replacedByTokenId: created.id },
       });
 
       await tx.session.update({
@@ -309,7 +318,7 @@ export class AuthRepository {
         data: { lastActivity: new Date() },
       });
 
-      return created;
+      return true;
     });
   }
 

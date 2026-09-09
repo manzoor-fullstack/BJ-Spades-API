@@ -27,6 +27,17 @@ enum UserTier {
 enum UserSource {
   ADMIN
   WEBHOOK
+  PLAYER
+}
+
+enum PlayerEmailTokenPurpose {
+  VERIFY_EMAIL
+  PASSWORD_RESET
+}
+
+enum PlayerAuthProvider {
+  GOOGLE
+  GITHUB
 }
 
 enum WebhookEventStatus {
@@ -44,11 +55,71 @@ enum TournamentStatus {
   CANCELLED
 }
 
+enum TournamentVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 enum RegistrationStatus {
   REGISTERED
   CHECKED_IN
   WITHDRAWN
   DISQUALIFIED
+}
+
+enum TournamentTeamStatus {
+  ACTIVE
+  ELIMINATED
+  CHAMPION
+  RUNNER_UP
+  DISQUALIFIED
+}
+
+enum TournamentPrizeAwardStatus {
+  HELD
+  CREDITED
+  REVERSED
+}
+
+enum GameMatchStatus {
+  BIDDING
+  PLAYING
+  COMPLETED
+  FORFEITED
+  CANCELLED
+}
+
+enum GameCommandType {
+  BID
+  PLAY_CARD
+  CLAIM_TIMEOUT
+  FORFEIT
+}
+
+enum GameEventType {
+  MATCH_CREATED
+  BID_PLACED
+  CARD_PLAYED
+  TRICK_COMPLETED
+  HAND_COMPLETED
+  MATCH_COMPLETED
+  TURN_TIMED_OUT
+  PLAYER_FORFEITED
+}
+
+enum PlayerFriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum GameChallengeStatus {
+  PENDING
+  ACCEPTED
+  MATCHED
+  DECLINED
+  CANCELLED
+  EXPIRED
 }
 
 enum PayoutStatus {
@@ -58,6 +129,13 @@ enum PayoutStatus {
   PROCESSING
   PAID
   FAILED
+  CANCELLED
+}
+
+enum WithdrawalRequestStatus {
+  PENDING_REVIEW
+  APPROVED
+  DECLINED
   CANCELLED
 }
 
@@ -91,6 +169,18 @@ enum TransactionStatus {
   COMPLETED
   FAILED
   REVERSED
+}
+
+enum DepositStatus {
+  CREATED
+  CHECKOUT_CREATED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  DISPUTED
 }
 
 enum StripeAccountStatus {
@@ -310,6 +400,9 @@ model User {
 
   // Stripe Connect — Phase 6
   stripeConnectAccountId String?             @unique
+  /// Stripe Customer used for player deposits. Separate from the Connect
+  /// account, which receives payouts.
+  stripeCustomerId       String?             @unique
   stripeAccountStatus    StripeAccountStatus @default(NOT_CONNECTED)
 
   /// When Stripe FIRST reported this account as VERIFIED, set by the
@@ -331,23 +424,46 @@ model User {
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
-  registrations  TournamentRegistration[]
-  payouts        Payout[]
-  transactions   Transaction[]
-  securityAlerts SecurityAlert[]
-  prizeClaims    PrizeClaim[]
-  disputes       Dispute[]
-  verification   PlayerVerification?
-  payoutMethods  PayoutMethodAccount[]
-  taxDocuments   TaxDocument[]
-  shipments      Shipment[]
+  registrations         TournamentRegistration[]
+  tournamentPrizeAwards TournamentPrizeAward[]
+  hostedTournaments     Tournament[]             @relation("PlayerHostedTournaments")
+  payouts               Payout[]
+  transactions          Transaction[]
+  securityAlerts        SecurityAlert[]
+  prizeClaims           PrizeClaim[]
+  disputes              Dispute[]
+  verification          PlayerVerification?
+  payoutMethods         PayoutMethodAccount[]
+  taxDocuments          TaxDocument[]
+  shipments             Shipment[]
+  credential            PlayerCredential?
+  playerSessions        PlayerSession[]
+  deposits              Deposit[]
+  paymentMethods        PlayerPaymentMethod[]
+  withdrawalRequests    WithdrawalRequest[]
+  playerEmailTokens     PlayerEmailToken[]
+  oauthAccounts         PlayerOAuthAccount[]
+  playerProfile         PlayerProfile?
+  createdGameMatches    GameMatch[]              @relation("GameMatchCreator")
+  gameSeats             GameSeat[]
+  gameCommands          GameCommand[]
+  gameEvents            GameEvent[]              @relation("GameEventActor")
+  friendshipsAsFirst    PlayerFriendship[]       @relation("FriendshipFirst")
+  friendshipsAsSecond   PlayerFriendship[]       @relation("FriendshipSecond")
+  friendshipRequests    PlayerFriendship[]       @relation("FriendshipRequester")
+  blocksCreated         PlayerBlock[]            @relation("BlockCreator")
+  blocksReceived        PlayerBlock[]            @relation("BlockTarget")
+  playerPresence        PlayerPresence?
+  challengesSent        GameChallenge[]          @relation("ChallengeSender")
+  challengesReceived    GameChallenge[]          @relation("ChallengeRecipient")
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
   deletedAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  playerRefreshTokens PlayerRefreshToken[]
 
   @@index([status])
   @@index([tier])
@@ -355,6 +471,224 @@ model User {
   @@index([createdAt])
   @@index([deletedAt])
   @@index([email, status])
+}
+
+model PlayerProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName String    @db.VarChar(60)
+  tagline     String?   @db.VarChar(100)
+  bio         String?   @db.VarChar(300)
+  dateOfBirth DateTime? @db.Date
+  location    String?   @db.VarChar(120)
+
+  /// Players may hide their public ranking card while retaining their own
+  /// authenticated statistics. Hidden profiles never appear in leaderboards.
+  leaderboardVisible Boolean @default(true)
+
+  avatarName       String      @default("Poppa Cool") @db.VarChar(40)
+  avatarBackground String      @default("#fbbf24") @db.VarChar(7)
+  avatarImageId    String?     @unique
+  avatarImage      MediaAsset? @relation("PlayerAvatar", fields: [avatarImageId], references: [id], onDelete: SetNull)
+
+  twitter   String? @db.VarChar(200)
+  facebook  String? @db.VarChar(200)
+  instagram String? @db.VarChar(200)
+  youtube   String? @db.VarChar(200)
+  twitch    String? @db.VarChar(200)
+  discord   String? @db.VarChar(200)
+  website   String? @db.VarChar(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlayerCredential {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  username     String  @unique
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlayerSession {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rememberMe Boolean @default(false)
+  device     String?
+  browser    String?
+  os         String?
+  ipAddress  String?
+  userAgent  String?
+
+  isActive     Boolean   @default(true)
+  lastActivity DateTime  @default(now())
+  revokedAt    DateTime?
+
+  refreshTokens PlayerRefreshToken[]
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, isActive])
+  @@index([expiresAt])
+}
+
+model PlayerFriendship {
+  id String @id @default(uuid())
+
+  /// Canonical ordering is enforced by the service and database constraint.
+  playerOneId String
+  playerOne   User   @relation("FriendshipFirst", fields: [playerOneId], references: [id], onDelete: Cascade)
+  playerTwoId String
+  playerTwo   User   @relation("FriendshipSecond", fields: [playerTwoId], references: [id], onDelete: Cascade)
+
+  requestedById String
+  requestedBy   User                   @relation("FriendshipRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  status        PlayerFriendshipStatus @default(PENDING)
+
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([playerOneId, playerTwoId])
+  @@index([playerOneId, status])
+  @@index([playerTwoId, status])
+  @@index([requestedById, status])
+}
+
+model PlayerBlock {
+  id String @id @default(uuid())
+
+  blockerId String
+  blocker   User   @relation("BlockCreator", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User   @relation("BlockTarget", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model PlayerPresence {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  heartbeatAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([heartbeatAt])
+}
+
+model GameChallenge {
+  id String @id @default(uuid())
+
+  challengerId String
+  challenger   User   @relation("ChallengeSender", fields: [challengerId], references: [id], onDelete: Cascade)
+  challengedId String
+  challenged   User   @relation("ChallengeRecipient", fields: [challengedId], references: [id], onDelete: Cascade)
+
+  requestId  String              @db.VarChar(80)
+  status     GameChallengeStatus @default(PENDING)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  resolvedAt DateTime?
+
+  matchId String?
+  match   GameMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([challengerId, requestId])
+  @@index([challengedId, status, expiresAt])
+  @@index([challengerId, status, expiresAt])
+  @@index([status, acceptedAt])
+  @@index([matchId])
+}
+
+model PlayerRefreshToken {
+  id String @id @default(uuid())
+
+  tokenHash String @unique
+
+  sessionId String
+  session   PlayerSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  replacedByTokenId String?
+  createdByIp       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model PlayerEmailToken {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose    PlayerEmailTokenPurpose
+  tokenHash  String                  @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
+}
+
+model PlayerOAuthAccount {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider       PlayerAuthProvider
+  providerUserId String
+  emailAtLink    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model PlayerOAuthState {
+  id String @id @default(uuid())
+
+  stateHash    String             @unique
+  provider     PlayerAuthProvider
+  codeVerifier String
+  rememberMe   Boolean            @default(false)
+  redirectPath String             @default("/")
+  expiresAt    DateTime
+  consumedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 /// Every inbound webhook is recorded before processing begins, so a payload
@@ -455,7 +789,8 @@ model MediaAsset {
   /// Admins using this asset as their profile picture. Separate from
   /// `uploadedByAdmin`: the admin who uploaded a picture is not necessarily
   /// the admin wearing it.
-  avatarOfAdmins    Admin[] @relation("AdminAvatar")
+  avatarOfAdmins  Admin[]         @relation("AdminAvatar")
+  avatarOfPlayers PlayerProfile[] @relation("PlayerAvatar")
 
   tournaments Tournament[]
   rewards     Reward[]
@@ -487,23 +822,45 @@ model Tournament {
 
   status TournamentStatus @default(SCHEDULED)
 
+  visibility       TournamentVisibility @default(PUBLIC)
+  isFeatured       Boolean              @default(false)
+  featuredSubtitle String?
+  xpMultiplier     Decimal              @default(1) @db.Decimal(4, 2)
+  featuredRewards  String[]             @default([])
+
   cancelledAt  DateTime?
   cancelReason String?
 
-  createdByAdminId String
-  createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
+  bracketStartedAt  DateTime?
+  bracketSeed       String?   @db.VarChar(64)
+  bracketRounds     Int?
+  prizeRuleVersion  String    @default("team-70-30-v1") @db.VarChar(40)
+  settlementVersion Int       @default(0)
+  settledAt         DateTime?
 
-  registrations TournamentRegistration[]
-  payouts       Payout[]
-  transactions  Transaction[]
-  prizeClaims   PrizeClaim[]
-  disputes      Dispute[]
+  createdByAdminId String?
+  createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
+
+  createdByPlayerId String?
+  createdByPlayer   User?   @relation("PlayerHostedTournaments", fields: [createdByPlayerId], references: [id])
+
+  registrations     TournamentRegistration[]
+  payouts           Payout[]
+  transactions      Transaction[]
+  prizeClaims       PrizeClaim[]
+  disputes          Dispute[]
+  gameMatches       GameMatch[]
+  teams             TournamentTeam[]
+  prizeAwards       TournamentPrizeAward[]
+  resultCorrections TournamentResultCorrection[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, startsAt])
   @@index([startsAt])
+  @@index([visibility, status, startsAt])
+  @@index([createdByPlayerId, startsAt])
 }
 
 model TournamentRegistration {
@@ -523,9 +880,19 @@ model TournamentRegistration {
 
   registeredAt DateTime @default(now())
 
+  /// Increments whenever a withdrawn player joins again. Ledger references use
+  /// this value so every debit and its matching refund remain individually
+  /// auditable across repeated join/cancel cycles.
+  entryAttempt Int @default(1)
+
   /// Payout associated with this registration
   payout   Payout? @relation(fields: [payoutId], references: [id])
   payoutId String?
+
+  teamId String?
+  team   TournamentTeam? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  prizeAwards TournamentPrizeAward[]
 
   /// Makes double-registration impossible at the database level rather than
   /// relying on a check-then-insert race in application code. Two simultaneous
@@ -533,6 +900,192 @@ model TournamentRegistration {
   @@unique([tournamentId, userId])
   @@index([userId])
   @@index([tournamentId, status])
+  @@index([teamId])
+}
+
+model TournamentTeam {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  seed            Int
+  status          TournamentTeamStatus @default(ACTIVE)
+  placement       Int?
+  eliminatedRound Int?
+
+  registrations TournamentRegistration[]
+  seats         GameSeat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tournamentId, seed])
+  @@index([tournamentId, status])
+}
+
+model TournamentPrizeAward {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+
+  registrationId String
+  registration   TournamentRegistration @relation(fields: [registrationId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  placement         Int
+  amount            Decimal                    @db.Decimal(18, 2)
+  settlementVersion Int
+  status            TournamentPrizeAwardStatus
+  holdReason        String?
+  correctionReason  String?
+
+  transactionId String?      @unique
+  transaction   Transaction? @relation("TournamentPrizeCredit", fields: [transactionId], references: [id], onDelete: Restrict)
+
+  reversalTransactionId String?      @unique
+  reversalTransaction   Transaction? @relation("TournamentPrizeReversal", fields: [reversalTransactionId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tournamentId, userId, settlementVersion])
+  @@index([tournamentId, status])
+  @@index([userId, createdAt])
+}
+
+model TournamentResultCorrection {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+
+  requestId         String   @db.VarChar(80)
+  reason            String
+  settlementVersion Int
+  createdAt         DateTime @default(now())
+
+  @@unique([tournamentId, requestId])
+  @@index([tournamentId, createdAt])
+}
+
+model GameMatch {
+  id String @id @default(uuid())
+
+  status            GameMatchStatus @default(BIDDING)
+  rulesVersion      String          @db.VarChar(60)
+  creationRequestId String          @db.VarChar(80)
+
+  createdByPlayerId String
+  createdByPlayer   User   @relation("GameMatchCreator", fields: [createdByPlayerId], references: [id])
+
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  tournamentRound Int?
+  tournamentSlot  Int?
+  resultAppliedAt DateTime?
+
+  /// Full authoritative snapshot. API serializers expose only the requesting
+  /// seat's hand; other hands never leave the service boundary.
+  state Json
+
+  version          Int       @default(1)
+  handNumber       Int       @default(1)
+  dealerSeat       Int
+  currentSeat      Int?
+  winnerTeam       Int?
+  actionDeadlineAt DateTime?
+  completedAt      DateTime?
+
+  seats      GameSeat[]
+  commands   GameCommand[]
+  events     GameEvent[]
+  challenges GameChallenge[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([createdByPlayerId, creationRequestId])
+  @@unique([tournamentId, tournamentRound, tournamentSlot])
+  @@index([status, updatedAt])
+  @@index([tournamentId, status])
+}
+
+model GameSeat {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  seat Int
+  team Int
+
+  tournamentTeamId String?
+  tournamentTeam   TournamentTeam? @relation(fields: [tournamentTeamId], references: [id], onDelete: Restrict)
+
+  entryTokenHash      String?   @db.VarChar(64)
+  entryTokenExpiresAt DateTime?
+  joinedAt            DateTime?
+  revealedHandNumber  Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, seat])
+  @@unique([matchId, userId])
+  @@index([userId, createdAt])
+  @@index([tournamentTeamId])
+}
+
+model GameCommand {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  idempotencyKey  String          @db.VarChar(80)
+  expectedVersion Int
+  resultVersion   Int
+  type            GameCommandType
+  payload         Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, userId, idempotencyKey])
+  @@index([matchId, resultVersion])
+  @@index([userId, createdAt])
+}
+
+model GameEvent {
+  id String @id @default(uuid())
+
+  matchId String
+  match   GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  sequence Int
+  type     GameEventType
+
+  actorUserId String?
+  actorUser   User?   @relation("GameEventActor", fields: [actorUserId], references: [id])
+
+  /// Public event data only. Private hands live in GameMatch.state and are
+  /// projected for the authenticated seat by MatchesService.
+  payload Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, sequence])
+  @@index([matchId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model Reward {
@@ -617,13 +1170,15 @@ model MerchandiseVariant {
   color String?
 
   /// Optional, but unique when supplied. Auto-generated when omitted.
-  sku   String? @unique
-  stock Int     @default(0)
+  sku      String? @unique
+  stock    Int     @default(0)
+  position Int     @default(0)
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   shipments Shipment[]
 
+  @@index([merchandiseId, position])
   @@index([merchandiseId])
 }
 
@@ -641,6 +1196,15 @@ model Payout {
   tournamentId String?
   tournament   Tournament? @relation(fields: [tournamentId], references: [id])
   placement    Int?
+
+  /// One prize obligation per tournament result. Null for non-tournament
+  /// payouts; unique when results create it, preventing concurrent duplicates.
+  tournamentResultKey String? @unique
+
+  /// Present only when this provider settlement was created from wallet funds.
+  /// Tournament prizes are credited to the wallet first and never populate it.
+  withdrawalRequestId String?            @unique
+  withdrawalRequest   WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id])
 
   stripeTransferId String? @unique
   failureReason    String?
@@ -685,6 +1249,10 @@ model Transaction {
   balanceBefore Decimal @db.Decimal(18, 2)
   balanceAfter  Decimal @db.Decimal(18, 2)
 
+  /// False for an externally settled payment recorded for history only. Such a
+  /// row carries its real amount but must not change or inflate User.balance.
+  affectsBalance Boolean @default(true)
+
   description String?
   reference   String? @unique // external id, e.g. Stripe
 
@@ -697,11 +1265,73 @@ model Transaction {
   createdByAdminId String?
   createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
 
+  tournamentPrizeCredit   TournamentPrizeAward? @relation("TournamentPrizeCredit")
+  tournamentPrizeReversal TournamentPrizeAward? @relation("TournamentPrizeReversal")
+  withdrawalReservation   WithdrawalRequest?    @relation("WithdrawalReservation")
+  withdrawalRelease       WithdrawalRequest?    @relation("WithdrawalRelease")
+
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([type, status])
   @@index([createdAt])
+}
+
+/// One player-initiated Stripe Checkout attempt. Money is credited only after
+/// a signed Stripe event confirms settlement; browser redirects never move a
+/// balance.
+model Deposit {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  requestId String
+  amount    Decimal       @db.Decimal(18, 2)
+  currency  String        @default("USD")
+  status    DepositStatus @default(CREATED)
+
+  stripeCheckoutSessionId String? @unique
+  stripeCheckoutUrl       String?
+  stripePaymentIntentId   String? @unique
+
+  failureCode    String?
+  failureMessage String?
+
+  refundedAmount Decimal @default(0) @db.Decimal(18, 2)
+  disputedAmount Decimal @default(0) @db.Decimal(18, 2)
+
+  creditedAt DateTime?
+  failedAt   DateTime?
+  canceledAt DateTime?
+  updatedAt  DateTime  @updatedAt
+  createdAt  DateTime  @default(now())
+
+  @@unique([userId, requestId])
+  @@index([userId, createdAt])
+  @@index([status, updatedAt])
+}
+
+/// Safe display metadata for a provider-owned payment method. Raw account or
+/// card numbers never enter this database.
+model PlayerPaymentMethod {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  stripePaymentMethodId String  @unique
+  type                  String
+  brand                 String?
+  last4                 String?
+  expMonth              Int?
+  expYear               Int?
+  isDefault             Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Settings {
@@ -985,12 +1615,56 @@ model PayoutMethodAccount {
   /// Where a player has several, the one used by default.
   isDefault Boolean @default(false)
 
+  withdrawals WithdrawalRequest[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   /// One account per rail per player.
   @@unique([userId, method])
   @@index([userId])
+}
+
+/// A player's request to move already-credited wallet funds to a verified
+/// destination. The linked Payout is the separate provider settlement state
+/// machine; this record owns review, reservation and release semantics.
+model WithdrawalRequest {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  requestId   String
+  payloadHash String
+  amount      Decimal @db.Decimal(18, 2)
+  currency    String  @default("usd")
+
+  destinationId        String
+  destination          PayoutMethodAccount @relation(fields: [destinationId], references: [id])
+  destinationMethod    PayoutMethod
+  destinationLabel     String?
+  destinationReference String
+
+  status       WithdrawalRequestStatus @default(PENDING_REVIEW)
+  reviewReason String?
+  approvedAt   DateTime?
+  declinedAt   DateTime?
+  cancelledAt  DateTime?
+
+  payout Payout?
+
+  reservationTransactionId String       @unique
+  reservationTransaction   Transaction  @relation("WithdrawalReservation", fields: [reservationTransactionId], references: [id])
+  releaseTransactionId     String?      @unique
+  releaseTransaction       Transaction? @relation("WithdrawalRelease", fields: [releaseTransactionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, requestId])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([destinationId])
 }
 
 enum TaxDocumentKind {

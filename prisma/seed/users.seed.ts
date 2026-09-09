@@ -1,4 +1,5 @@
 import { PrismaClient, UserSource, UserStatus, UserTier } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 /**
  * 50 users spanning every status, tier, and source.
@@ -62,6 +63,7 @@ export async function seedUsers(prisma: PrismaClient) {
 
   const now = Date.now();
   const counts: Record<string, number> = {};
+  const browserFixturePassword = await bcrypt.hash('Player123!', 12);
 
   for (let i = 0; i < TOTAL; i++) {
     const firstName = pick(FIRST_NAMES, i);
@@ -81,7 +83,7 @@ export async function seedUsers(prisma: PrismaClient) {
 
     const balance = status === UserStatus.SUSPENDED ? 0 : (i * 137) % 25_000;
 
-    await prisma.user.upsert({
+    const user = await prisma.user.upsert({
       where: { email },
       update: {},
       create: {
@@ -107,6 +109,18 @@ export async function seedUsers(prisma: PrismaClient) {
         createdByAdminId: source === UserSource.ADMIN ? (admin?.id ?? null) : null,
       },
     });
+
+    if (i === 0) {
+      await prisma.playerCredential.upsert({
+        where: { userId: user.id },
+        update: {},
+        create: {
+          userId: user.id,
+          username: 'johnmitchell0',
+          passwordHash: browserFixturePassword,
+        },
+      });
+    }
 
     counts[status] = (counts[status] ?? 0) + 1;
   }

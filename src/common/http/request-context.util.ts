@@ -12,23 +12,11 @@ export interface RequestContext {
 /**
  * Extracts the client IP.
  *
- * `X-Forwarded-For` is a comma-separated chain; the left-most entry is the
- * original client. Only trust it behind a proxy that overwrites it — otherwise
- * a client can forge the header. Express does this correctly when `trust proxy`
- * is configured, which is a deployment concern (see PHASE-8 runbook).
+ * Express resolves `request.ip` from the socket and its configured trusted
+ * proxy boundary. Reading X-Forwarded-For here would bypass that boundary and
+ * allow a direct client to forge the address used for throttling and auditing.
  */
 export function extractIpAddress(request: Request): string | undefined {
-  const forwarded = request.headers['x-forwarded-for'];
-
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
-  }
-
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0]?.split(',')[0]?.trim();
-  }
-
   return request.ip ?? request.socket.remoteAddress ?? undefined;
 }
 

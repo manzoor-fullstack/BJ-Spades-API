@@ -7,6 +7,7 @@ import {
   Prisma,
   RegistrationStatus,
   TournamentStatus,
+  TournamentVisibility,
   UserStatus,
   UserTier,
 } from '@prisma/client';
@@ -26,10 +27,14 @@ import type {
 import { combineStartsAt } from '../start-time.util';
 import { ALLOWED_TRANSITIONS } from '../tournament-status';
 import { TournamentsService } from '../tournaments.service';
+import type { TournamentProgressionService } from '../tournament-progression.service';
 
 type MockedTournaments = { [K in keyof TournamentsRepository]: jest.Mock };
 type MockedUsers = { [K in keyof UsersRepository]: jest.Mock };
 type MockedMedia = { [K in keyof MediaService]: jest.Mock };
+type MockedProgression = {
+  [K in keyof TournamentProgressionService]: jest.Mock;
+};
 
 const ADMIN: AuthenticatedAdmin = {
   id: 'admin-1',
@@ -58,9 +63,21 @@ function tournamentFixture(
     maxPlayers: 16,
     startsAt: new Date('2026-06-05T23:00:00.000Z'),
     status: TournamentStatus.REGISTERING,
+    visibility: TournamentVisibility.PUBLIC,
+    isFeatured: false,
+    featuredSubtitle: null,
+    xpMultiplier: new Prisma.Decimal('1.00'),
+    featuredRewards: [],
     cancelledAt: null,
     cancelReason: null,
+    bracketStartedAt: null,
+    bracketSeed: null,
+    bracketRounds: null,
+    prizeRuleVersion: 'team-70-30-v1',
+    settlementVersion: 0,
+    settledAt: null,
     createdByAdminId: ADMIN.id,
+    createdByPlayerId: null,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     updatedAt: new Date('2026-05-01T00:00:00.000Z'),
     _count: { registrations: 0 },
@@ -90,8 +107,10 @@ function registrationFixture() {
     placement: null,
     prizeWon: null,
     registeredAt: new Date('2026-05-02T00:00:00.000Z'),
+    entryAttempt: 1,
     // Added by the Phase 6 schema: a registration can be linked to its payout.
     payoutId: null,
+    teamId: null,
     user: userFixture(),
   };
 }
@@ -112,6 +131,7 @@ describe('TournamentsService', () => {
   let repository: MockedTournaments;
   let users: MockedUsers;
   let media: MockedMedia;
+  let progression: MockedProgression;
   let service: TournamentsService;
 
   beforeEach(() => {
@@ -119,6 +139,10 @@ describe('TournamentsService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
       findById: jest.fn(),
+      findPlayerVisible: jest.fn(),
+      findPlayerVisibleById: jest.fn(),
+      findHostedByPlayer: jest.fn(),
+      createPlayerHosted: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
@@ -130,7 +154,7 @@ describe('TournamentsService', () => {
       countRegistrations: jest.fn(),
       findRegistration: jest.fn(),
       createRegistration: jest.fn(),
-      deleteRegistration: jest.fn(),
+      withdrawRegistration: jest.fn(),
       submitResults: jest.fn(),
       // Phase 6: cancelling refunds every entry fee in the same transaction
       // as the status change, so `cancel` no longer goes through `update`.
@@ -147,10 +171,19 @@ describe('TournamentsService', () => {
       cleanupOrphans: jest.fn(),
     };
 
+    progression = {
+      start: jest.fn(),
+      applyCompletedMatch: jest.fn(),
+      correctResults: jest.fn(),
+      releaseHeldAwards: jest.fn(),
+      disqualifyPlayer: jest.fn(),
+    };
+
     service = new TournamentsService(
       repository as unknown as TournamentsRepository,
       users as unknown as UsersRepository,
       media as unknown as MediaService,
+      progression as unknown as TournamentProgressionService,
     );
   });
 
@@ -307,6 +340,11 @@ describe('TournamentsService', () => {
         tournamentFixture({ status: from }),
       );
       repository.update.mockResolvedValue(tournamentFixture({ status: to }));
+      if (to === TournamentStatus.IN_PROGRESS) {
+        repository.findById
+          .mockResolvedValueOnce(tournamentFixture({ status: from }))
+          .mockResolvedValueOnce(tournamentFixture({ status: to }));
+      }
 
       await expect(
         service.update(TOURNAMENT_ID, { status: to }, undefined, ADMIN),
@@ -483,9 +521,12 @@ describe('TournamentsService', () => {
         }),
       );
       repository.findRegistrations.mockResolvedValue([registrationFixture()]);
-      repository.submitResults.mockResolvedValue(
-        tournamentFixture({ status: TournamentStatus.COMPLETED }),
-      );
+      repository.submitResults.mockResolvedValue({
+        outcome: 'COMPLETED',
+        tournament: tournamentFixture({
+          status: TournamentStatus.COMPLETED,
+        }),
+      });
     });
 
     it('records placements and completes the tournament', async () => {

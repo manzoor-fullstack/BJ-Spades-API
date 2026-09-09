@@ -6,6 +6,7 @@ import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
 import { testPrisma } from './setup';
+import { assertTestDatabaseUrl } from './test-database-safety';
 
 interface ErrorEnvelope {
   success: false;
@@ -56,8 +57,16 @@ describe('Phase 0 — integration harness', () => {
   });
 
   describe('database', () => {
-    it('targets the test database, never dev or production', () => {
-      expect(process.env.DATABASE_URL).toContain('bjspades_test');
+    it('connects to the allowlisted disposable database', async () => {
+      expect(() =>
+        assertTestDatabaseUrl(process.env.DATABASE_URL),
+      ).not.toThrow();
+      const connection = await testPrisma.$queryRaw<
+        { database: string; schema: string }[]
+      >`SELECT current_database() AS database, current_schema() AS schema`;
+      expect(connection).toEqual([
+        { database: 'bjspades_test', schema: 'public' },
+      ]);
     });
 
     it('applied migrations', async () => {

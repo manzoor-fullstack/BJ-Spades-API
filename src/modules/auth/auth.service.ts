@@ -29,6 +29,13 @@ import { TokenService } from './services/token.service';
 /** Deliberately identical for unknown email and wrong password. */
 const INVALID_CREDENTIALS = 'Invalid email or password.';
 
+/**
+ * Concurrent browser/BFF requests can present the same token while one is
+ * being rotated. A brief grace period lets the database winner survive without
+ * treating the losing request as theft. The loser never receives new tokens.
+ */
+const REFRESH_REUSE_GRACE_MS = 5_000;
+
 /** Storage folder for profile pictures; mirrors TOURNAMENT_IMAGE_FOLDER. */
 const ADMIN_AVATAR_FOLDER = 'avatars';
 
@@ -190,6 +197,16 @@ export class AuthService implements OnModuleInit {
     }
 
     if (stored.revokedAt) {
+      const recentlyRotated =
+        stored.replacedByTokenId !== null &&
+        Date.now() - stored.revokedAt.getTime() <= REFRESH_REUSE_GRACE_MS;
+
+      if (recentlyRotated) {
+        throw new UnauthorizedException(
+          'This refresh token has already been rotated. Please retry with the latest session.',
+        );
+      }
+
       // Reuse of a rotated token means someone replayed a stolen copy. The
       // legitimate holder also holds a token in this chain, so the safe
       // response is to kill the whole session and force a fresh login.
@@ -263,7 +280,7 @@ export class AuthService implements OnModuleInit {
     const nextRefresh =
       await this.tokenService.generateRefreshToken(nextPayload);
 
-    await this.authRepository.rotateRefreshToken({
+    const rotated = await this.authRepository.rotateRefreshToken({
       currentTokenId: stored.id,
       next: {
         tokenHash: hashToken(nextRefresh.token),
@@ -273,6 +290,15 @@ export class AuthService implements OnModuleInit {
         createdByIp: context.ipAddress,
       },
     });
+
+    // Another request may have read the same active row before this request
+    // claimed it. Refuse this response without revoking the winning session;
+    // a later replay of the already-revoked token still triggers theft logic.
+    if (!rotated) {
+      throw new UnauthorizedException(
+        'This refresh token has already been rotated. Please retry with the latest session.',
+      );
+    }
 
     return {
       accessToken,

@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
   Prisma,
-  PayoutStatus,
+  DisputeStatus,
   RegistrationStatus,
+  TournamentPrizeAwardStatus,
   TournamentStatus,
   TransactionType,
 } from '@prisma/client';
@@ -21,7 +22,17 @@ import { recordLedgerEntry } from '../../transactions/repositories/transactions.
  */
 const TOURNAMENT_INCLUDE = {
   image: true,
-  _count: { select: { registrations: true } },
+  _count: {
+    select: {
+      registrations: {
+        where: {
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+      },
+    },
+  },
 } satisfies Prisma.TournamentInclude;
 
 export type TournamentWithRelations = Prisma.TournamentGetPayload<{
@@ -41,6 +52,46 @@ const REGISTRATION_INCLUDE = {
     },
   },
 } satisfies Prisma.TournamentRegistrationInclude;
+
+const PLAYER_REGISTRATION_SELECT = {
+  id: true,
+  status: true,
+  placement: true,
+  prizeWon: true,
+  registeredAt: true,
+  entryAttempt: true,
+} satisfies Prisma.TournamentRegistrationSelect;
+
+const PLAYER_MATCH_SELECT = {
+  select: {
+    id: true,
+    status: true,
+    tournamentRound: true,
+    tournamentSlot: true,
+    seats: { select: { userId: true } },
+  },
+} satisfies Prisma.GameMatchFindManyArgs;
+
+const PLAYER_TOURNAMENT_INCLUDE = {
+  image: true,
+  registrations: { select: PLAYER_REGISTRATION_SELECT },
+  gameMatches: PLAYER_MATCH_SELECT,
+  _count: {
+    select: {
+      registrations: {
+        where: {
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.TournamentInclude;
+
+export type PlayerTournamentWithState = Prisma.TournamentGetPayload<{
+  include: typeof PLAYER_TOURNAMENT_INCLUDE;
+}>;
 
 export type RegistrationWithUser = Prisma.TournamentRegistrationGetPayload<{
   include: typeof REGISTRATION_INCLUDE;
@@ -73,6 +124,14 @@ export interface CreateTournamentData {
   createdByAdminId: string;
 }
 
+export interface CreatePlayerTournamentData {
+  name: string;
+  description: string | null;
+  maxPlayers: number;
+  startsAt: Date;
+  createdByPlayerId: string;
+}
+
 export interface UpdateTournamentData {
   name?: string;
   description?: string | null;
@@ -97,6 +156,11 @@ export interface ResultRow {
   prizeWon: Money | null;
 }
 
+export type SubmitResultsOutcome =
+  | { outcome: 'COMPLETED'; tournament: TournamentWithRelations }
+  | { outcome: 'NOT_FOUND' }
+  | { outcome: 'INVALID_STATUS'; status: TournamentStatus };
+
 /**
  * Every way the transactional registration attempt can end.
  *
@@ -113,11 +177,18 @@ export type RegistrationOutcome =
   | { outcome: 'ALREADY_REGISTERED' }
   | { outcome: 'INSUFFICIENT_BALANCE'; balance: Money; entryFee: Money };
 
+export type WithdrawalOutcome =
+  | { outcome: 'WITHDRAWN'; registration: RegistrationWithUser }
+  | { outcome: 'NOT_FOUND' }
+  | { outcome: 'COMPLETED' };
+
 /** Shape of the locked row read back by the raw SELECT below. */
 interface LockedTournamentRow {
   status: TournamentStatus;
   maxPlayers: number;
   entryFee: Money;
+  name: string;
+  settlementVersion: number;
 }
 
 /**
@@ -134,12 +205,19 @@ interface LockedTournamentRow {
 export function entryFeeReference(
   tournamentId: string,
   userId: string,
+  attempt = 1,
 ): string {
-  return `entry_fee:${tournamentId}:${userId}`;
+  const base = `entry_fee:${tournamentId}:${userId}`;
+  return attempt === 1 ? base : `${base}:${attempt}`;
 }
 
-export function refundReference(tournamentId: string, userId: string): string {
-  return `refund:${tournamentId}:${userId}`;
+export function refundReference(
+  tournamentId: string,
+  userId: string,
+  attempt = 1,
+): string {
+  const base = `refund:${tournamentId}:${userId}`;
+  return attempt === 1 ? base : `${base}:${attempt}`;
 }
 
 @Injectable()
@@ -180,6 +258,129 @@ export class TournamentsRepository {
     return this.prisma.tournament.findUnique({
       where: { id },
       include: TOURNAMENT_INCLUDE,
+    });
+  }
+
+  findPlayerVisible(userId: string): Promise<PlayerTournamentWithState[]> {
+    return this.prisma.tournament.findMany({
+      where: {
+        OR: [
+          { visibility: 'PUBLIC' },
+          { createdByPlayerId: userId },
+          { registrations: { some: { userId } } },
+        ],
+      },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
+        },
+      },
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }, { id: 'asc' }],
+      take: 200,
+    });
+  }
+
+  findPlayerVisibleById(
+    userId: string,
+    id: string,
+  ): Promise<PlayerTournamentWithState | null> {
+    return this.prisma.tournament.findFirst({
+      where: {
+        id,
+        OR: [
+          { visibility: 'PUBLIC' },
+          { createdByPlayerId: userId },
+          { registrations: { some: { userId } } },
+        ],
+      },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
+        },
+      },
+    });
+  }
+
+  findHostedByPlayer(userId: string): Promise<PlayerTournamentWithState[]> {
+    return this.prisma.tournament.findMany({
+      where: { createdByPlayerId: userId },
+      include: {
+        ...PLAYER_TOURNAMENT_INCLUDE,
+        registrations: {
+          where: { userId },
+          select: PLAYER_REGISTRATION_SELECT,
+        },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
+        },
+      },
+      orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+      take: 100,
+    });
+  }
+
+  createPlayerHosted(
+    data: CreatePlayerTournamentData,
+  ): Promise<PlayerTournamentWithState> {
+    return this.prisma.$transaction(async (tx) => {
+      const tournament = await tx.tournament.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          maxPlayers: data.maxPlayers,
+          startsAt: data.startsAt,
+          status: TournamentStatus.SCHEDULED,
+          visibility: 'PRIVATE',
+          entryFee: toMoney(0),
+          prizePool: toMoney(0),
+          createdByPlayerId: data.createdByPlayerId,
+        },
+      });
+      await tx.tournamentRegistration.create({
+        data: {
+          tournamentId: tournament.id,
+          userId: data.createdByPlayerId,
+          status: RegistrationStatus.REGISTERED,
+        },
+      });
+      return tx.tournament.findUniqueOrThrow({
+        where: { id: tournament.id },
+        include: {
+          ...PLAYER_TOURNAMENT_INCLUDE,
+          registrations: {
+            where: { userId: data.createdByPlayerId },
+            select: PLAYER_REGISTRATION_SELECT,
+          },
+        },
+      });
     });
   }
 
@@ -233,7 +434,12 @@ export class TournamentsRepository {
 
   countAllRegistrations(): Promise<number> {
     return this.prisma.tournamentRegistration.count({
-      where: { tournament: { status: { not: TournamentStatus.CANCELLED } } },
+      where: {
+        tournament: { status: { not: TournamentStatus.CANCELLED } },
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
     });
   }
 
@@ -243,7 +449,12 @@ export class TournamentsRepository {
     take: number,
   ): Promise<RegistrationWithUser[]> {
     return this.prisma.tournamentRegistration.findMany({
-      where: { tournamentId },
+      where: {
+        tournamentId,
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
       include: REGISTRATION_INCLUDE,
       orderBy: [
         { placement: { sort: 'asc', nulls: 'last' } },
@@ -256,7 +467,12 @@ export class TournamentsRepository {
 
   countRegistrations(tournamentId: string): Promise<number> {
     return this.prisma.tournamentRegistration.count({
-      where: { tournamentId },
+      where: {
+        tournamentId,
+        status: {
+          in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+        },
+      },
     });
   }
 
@@ -317,7 +533,12 @@ export class TournamentsRepository {
       }
 
       const registeredCount = await tx.tournamentRegistration.count({
-        where: { tournamentId },
+        where: {
+          tournamentId,
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
       });
 
       if (registeredCount >= tournament.maxPlayers) {
@@ -330,12 +551,14 @@ export class TournamentsRepository {
 
       const existing = await tx.tournamentRegistration.findUnique({
         where: { tournamentId_userId: { tournamentId, userId } },
-        select: { id: true },
+        select: { id: true, status: true, entryAttempt: true },
       });
 
-      if (existing) {
+      if (existing && existing.status !== RegistrationStatus.WITHDRAWN) {
         return { outcome: 'ALREADY_REGISTERED' };
       }
+
+      const attempt = existing ? existing.entryAttempt + 1 : 1;
 
       const entryFee = toMoney(tournament.entryFee);
 
@@ -346,7 +569,7 @@ export class TournamentsRepository {
           // Signed: a fee is a debit.
           amount: entryFee.negated(),
           description: 'Tournament entry fee',
-          reference: entryFeeReference(tournamentId, userId),
+          reference: entryFeeReference(tournamentId, userId, attempt),
           tournamentId,
         });
 
@@ -363,84 +586,212 @@ export class TournamentsRepository {
         }
       }
 
-      const registration = await tx.tournamentRegistration.create({
-        data: {
-          tournamentId,
-          userId,
-          status: RegistrationStatus.REGISTERED,
-        },
-        include: REGISTRATION_INCLUDE,
-      });
+      const registration = existing
+        ? await tx.tournamentRegistration.update({
+            where: { id: existing.id },
+            data: {
+              status: RegistrationStatus.REGISTERED,
+              entryAttempt: attempt,
+              registeredAt: new Date(),
+              placement: null,
+              prizeWon: null,
+              payoutId: null,
+            },
+            include: REGISTRATION_INCLUDE,
+          })
+        : await tx.tournamentRegistration.create({
+            data: {
+              tournamentId,
+              userId,
+              status: RegistrationStatus.REGISTERED,
+              entryAttempt: attempt,
+            },
+            include: REGISTRATION_INCLUDE,
+          });
 
       return { outcome: 'CREATED', registration };
     });
   }
 
-  async deleteRegistration(
+  async withdrawRegistration(
     tournamentId: string,
     userId: string,
-  ): Promise<void> {
-    await this.prisma.tournamentRegistration.delete({
-      where: { tournamentId_userId: { tournamentId, userId } },
+  ): Promise<WithdrawalOutcome> {
+    return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<LockedTournamentRow[]>`
+        SELECT "status", "maxPlayers", "entryFee"
+        FROM "Tournament"
+        WHERE "id" = ${tournamentId}
+        FOR UPDATE
+      `;
+      if (!locked[0]) return { outcome: 'NOT_FOUND' };
+      if (locked[0].status === TournamentStatus.COMPLETED) {
+        return { outcome: 'COMPLETED' };
+      }
+
+      const registration = await tx.tournamentRegistration.findUnique({
+        where: { tournamentId_userId: { tournamentId, userId } },
+        include: REGISTRATION_INCLUDE,
+      });
+
+      if (!registration) return { outcome: 'NOT_FOUND' };
+
+      if (registration.status === RegistrationStatus.WITHDRAWN) {
+        return { outcome: 'WITHDRAWN', registration };
+      }
+
+      const feeReference = entryFeeReference(
+        tournamentId,
+        userId,
+        registration.entryAttempt,
+      );
+      const refund = refundReference(
+        tournamentId,
+        userId,
+        registration.entryAttempt,
+      );
+      const fee = await tx.transaction.findUnique({
+        where: { reference: feeReference },
+        select: { amount: true },
+      });
+
+      if (fee) {
+        const alreadyRefunded = await tx.transaction.findUnique({
+          where: { reference: refund },
+          select: { id: true },
+        });
+
+        if (!alreadyRefunded) {
+          const outcome = await recordLedgerEntry(tx, {
+            userId,
+            type: TransactionType.REFUND,
+            amount: toMoney(fee.amount).negated(),
+            description:
+              'Tournament entry fee refunded — registration withdrawn',
+            reference: refund,
+            tournamentId,
+          });
+
+          if (outcome.outcome !== 'RECORDED') {
+            throw new Error(
+              `Failed to refund registration: ${outcome.outcome}`,
+            );
+          }
+        }
+      }
+
+      const withdrawn = await tx.tournamentRegistration.update({
+        where: { id: registration.id },
+        data: { status: RegistrationStatus.WITHDRAWN },
+        include: REGISTRATION_INCLUDE,
+      });
+
+      return { outcome: 'WITHDRAWN', registration: withdrawn };
     });
   }
 
   /**
-   * Writes every placement, creates a payout for every prize, and flips the
+   * Writes every placement, credits every eligible prize, and flips the
    * tournament to COMPLETED — atomically.
    *
    * One transaction because a half-applied result set is worse than none: a
    * COMPLETED tournament missing its winner, placements recorded against a
    * tournament still shown as in progress, or — since Phase 6 — a prize
-   * recorded on a registration with no payout row behind it.
+   * recorded on a registration with no durable award behind it.
    *
-   * Deliberately no balance movement here. Submitting results creates the
-   * *obligation* (a PENDING payout); the money moves in
-   * `POST /payouts/:id/process`, once an admin has approved it and Stripe has
-   * accepted the transfer. Crediting at this point would pay every winner
-   * automatically the moment a bracket was typed in.
+   * Prize winnings always enter the wallet. Moving wallet funds to an external
+   * provider is a separate, player-initiated withdrawal, so the same prize can
+   * never be both spendable and independently paid by the admin payout queue.
    */
   async submitResults(
     tournamentId: string,
     results: ResultRow[],
-  ): Promise<TournamentWithRelations> {
+  ): Promise<SubmitResultsOutcome> {
     return this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<LockedTournamentRow[]>`
+        SELECT "status", "maxPlayers", "entryFee", "name", "settlementVersion"
+        FROM "Tournament"
+        WHERE "id" = ${tournamentId}
+        FOR UPDATE
+      `;
+      const tournament = locked[0];
+      if (!tournament) return { outcome: 'NOT_FOUND' };
+      if (tournament.status !== TournamentStatus.IN_PROGRESS) {
+        return { outcome: 'INVALID_STATUS', status: tournament.status };
+      }
+      const settlementVersion = Math.max(1, tournament.settlementVersion);
+
       for (const result of results) {
         const prize = result.prizeWon ? toMoney(result.prizeWon) : null;
 
-        // A placement without a prize (everyone below the paid places) gets a
-        // recorded result and no payout — there is nothing owed.
-        const payout =
-          prize && prize.greaterThan(0)
-            ? await tx.payout.create({
-                data: {
-                  userId: result.userId,
-                  amount: prize,
-                  tournamentId,
-                  placement: result.placement,
-                  status: PayoutStatus.PENDING,
-                  owedSince: new Date(),
-                },
-              })
-            : null;
-
-        await tx.tournamentRegistration.update({
+        const registration = await tx.tournamentRegistration.update({
           where: {
             tournamentId_userId: { tournamentId, userId: result.userId },
           },
           data: {
             placement: result.placement,
             prizeWon: result.prizeWon,
-            ...(payout ? { payoutId: payout.id } : {}),
           },
         });
+
+        if (prize && prize.greaterThan(0)) {
+          const held = await tx.dispute.findFirst({
+            where: {
+              userId: result.userId,
+              status: {
+                in: [DisputeStatus.UNDER_REVIEW, DisputeStatus.APPEAL_FILED],
+              },
+            },
+            select: { caseNumber: true },
+          });
+          if (held) {
+            await tx.tournamentPrizeAward.create({
+              data: {
+                tournamentId,
+                registrationId: registration.id,
+                userId: result.userId,
+                placement: result.placement,
+                amount: prize,
+                settlementVersion,
+                status: TournamentPrizeAwardStatus.HELD,
+                holdReason: `Dispute ${held.caseNumber} is pending.`,
+              },
+            });
+          } else {
+            const ledger = await recordLedgerEntry(tx, {
+              userId: result.userId,
+              type: TransactionType.PRIZE,
+              amount: prize,
+              reference: `tournament_prize:${tournamentId}:${result.userId}:v${settlementVersion}`,
+              description: `${tournament.name} - ${result.placement === 1 ? '1st' : '2nd'} Place`,
+              tournamentId,
+            });
+            if (ledger.outcome !== 'RECORDED') {
+              throw new Error(`Prize ledger write failed: ${ledger.outcome}`);
+            }
+            await tx.tournamentPrizeAward.create({
+              data: {
+                tournamentId,
+                registrationId: registration.id,
+                userId: result.userId,
+                placement: result.placement,
+                amount: prize,
+                settlementVersion,
+                status: TournamentPrizeAwardStatus.CREDITED,
+                transactionId: ledger.transaction.id,
+              },
+            });
+          }
+        }
       }
 
-      return tx.tournament.update({
+      const completed = await tx.tournament.update({
         where: { id: tournamentId },
-        data: { status: TournamentStatus.COMPLETED },
+        data: { status: TournamentStatus.COMPLETED, settlementVersion },
         include: TOURNAMENT_INCLUDE,
       });
+
+      return { outcome: 'COMPLETED', tournament: completed };
     });
   }
 
@@ -463,11 +814,12 @@ export class TournamentsRepository {
     return this.prisma.$transaction(async (tx) => {
       const fees = await tx.transaction.findMany({
         where: { tournamentId, type: TransactionType.ENTRY_FEE },
-        select: { userId: true, amount: true },
+        select: { userId: true, amount: true, reference: true },
       });
 
       for (const fee of fees) {
-        const reference = refundReference(tournamentId, fee.userId);
+        if (!fee.reference) continue;
+        const reference = fee.reference.replace(/^entry_fee:/, 'refund:');
 
         const alreadyRefunded = await tx.transaction.findUnique({
           where: { reference },
@@ -496,6 +848,16 @@ export class TournamentsRepository {
           );
         }
       }
+
+      await tx.tournamentRegistration.updateMany({
+        where: {
+          tournamentId,
+          status: {
+            in: [RegistrationStatus.REGISTERED, RegistrationStatus.CHECKED_IN],
+          },
+        },
+        data: { status: RegistrationStatus.WITHDRAWN },
+      });
 
       return tx.tournament.update({
         where: { id: tournamentId },

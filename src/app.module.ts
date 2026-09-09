@@ -19,9 +19,18 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './modules/auth/guards/permissions.guard';
 import { HealthModule } from './modules/health/health.module';
 import { MerchandiseModule } from './modules/merchandise/merchandise.module';
+import { MatchesModule } from './modules/matches/matches.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { PayoutMethodsModule } from './modules/payout-methods/payout-methods.module';
+import { PlayerAuthModule } from './modules/player-auth/player-auth.module';
+import { PlayerProfileModule } from './modules/player-profile/player-profile.module';
+import { PlayerSocialModule } from './modules/player-social/player-social.module';
+import { PlayerOverviewModule } from './modules/player-overview/player-overview.module';
+import { LeaderboardModule } from './modules/leaderboards/leaderboard.module';
+import { PlayerWalletModule } from './modules/player-wallet/player-wallet.module';
+import { PlayerDepositsModule } from './modules/player-deposits/player-deposits.module';
+import { PlayerWithdrawalsModule } from './modules/player-withdrawals/player-withdrawals.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
 import { TaxModule } from './modules/tax/tax.module';
 import { VerificationModule } from './modules/verification/verification.module';
@@ -79,6 +88,24 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     TransactionsModule,
 
     AuthModule,
+
+    PlayerAuthModule,
+
+    PlayerProfileModule,
+
+    PlayerOverviewModule,
+
+    LeaderboardModule,
+
+    PlayerSocialModule,
+
+    PlayerWalletModule,
+
+    PlayerDepositsModule,
+
+    PlayerWithdrawalsModule,
+
+    MatchesModule,
 
     RolesModule,
 

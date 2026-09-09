@@ -63,3 +63,4 @@ temp_interactive_push.bat
 # Uploaded files (Phase 4) — served from disk, never committed
 /uploads
 /uploads-test
+/.test-postgres

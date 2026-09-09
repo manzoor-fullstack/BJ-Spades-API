@@ -26,6 +26,12 @@ export interface LedgerEntryInput {
   status?: TransactionStatus;
   /** Backdating, used only by the backfill. Defaults to now. */
   createdAt?: Date;
+  /**
+   * Reserved for externally imposed reversals such as chargebacks. Those can
+   * arrive after tokens were spent, so refusing the debit would make the local
+   * ledger disagree with Stripe. Normal player/admin debits must omit this.
+   */
+  allowNegativeBalance?: boolean;
 }
 
 /**
@@ -94,10 +100,17 @@ export async function recordLedgerEntry(
 
   // A credit needs no floor. A debit needs the balance to be at least the size
   // of the debit, which is exactly "the result stays at or above zero".
-  const minimum = amount.isNegative() ? amount.negated() : toMoney(0);
+  const minimum = input.allowNegativeBalance
+    ? undefined
+    : amount.isNegative()
+      ? amount.negated()
+      : toMoney(0);
 
   const applied = await tx.user.updateMany({
-    where: { id: input.userId, balance: { gte: minimum } },
+    where: {
+      id: input.userId,
+      ...(minimum ? { balance: { gte: minimum } } : {}),
+    },
     data: { balance: { increment: amount } },
   });
 
@@ -134,6 +147,7 @@ export async function recordLedgerEntry(
       tournamentId: input.tournamentId ?? null,
       payoutId: input.payoutId ?? null,
       createdByAdminId: input.createdByAdminId ?? null,
+      affectsBalance: true,
       ...(input.createdAt ? { createdAt: input.createdAt } : {}),
     },
   });
@@ -238,7 +252,7 @@ export class TransactionsRepository {
       }),
       this.prisma.transaction.groupBy({
         by: ['userId'],
-        where: userId ? { userId } : {},
+        where: { affectsBalance: true, ...(userId ? { userId } : {}) },
         _sum: { amount: true },
         _count: { _all: true },
       }),

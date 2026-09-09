@@ -59,6 +59,41 @@ export interface StripeAccountLink {
   expiresAt: number;
 }
 
+export interface CreateStripeCustomerParams {
+  email: string;
+  userId: string;
+  idempotencyKey: string;
+}
+
+export interface StripeCustomer {
+  id: string;
+}
+
+export interface CreateCheckoutSessionParams {
+  amount: string;
+  currency: string;
+  customerId: string;
+  depositId: string;
+  successUrl: string;
+  cancelUrl: string;
+  idempotencyKey: string;
+}
+
+export interface StripeCheckoutSession {
+  id: string;
+  url: string;
+  paymentIntentId: string | null;
+}
+
+export interface StripePaymentMethod {
+  id: string;
+  type: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+}
+
 /** The slice of a Stripe event the webhook handler reads. */
 export interface StripeWebhookEvent {
   id: string;
@@ -81,6 +116,18 @@ export interface StripeGateway {
   createAccountLink(
     params: CreateAccountLinkParams,
   ): Promise<StripeAccountLink>;
+
+  createCustomer(params: CreateStripeCustomerParams): Promise<StripeCustomer>;
+
+  createCheckoutSession(
+    params: CreateCheckoutSessionParams,
+  ): Promise<StripeCheckoutSession>;
+
+  expireCheckoutSession(sessionId: string): Promise<void>;
+
+  retrievePaymentMethodForIntent(
+    paymentIntentId: string,
+  ): Promise<StripePaymentMethod | null>;
 
   /**
    * Verifies Stripe's signature over the RAW request bytes and returns the

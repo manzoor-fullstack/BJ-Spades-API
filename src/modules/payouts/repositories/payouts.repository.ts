@@ -7,6 +7,8 @@ import {
   TournamentStatus,
   TransactionStatus,
   TransactionType,
+  WithdrawalRequestStatus,
+  WebhookEventStatus,
 } from '@prisma/client';
 import type { Transaction, User } from '@prisma/client';
 
@@ -41,6 +43,15 @@ const PAYOUT_INCLUDE = {
     },
   },
   tournament: { select: { id: true, name: true } },
+  withdrawalRequest: {
+    select: {
+      id: true,
+      status: true,
+      destinationReference: true,
+      reservationTransactionId: true,
+      releaseTransactionId: true,
+    },
+  },
 } satisfies Prisma.PayoutInclude;
 
 export type PayoutWithRelations = Prisma.PayoutGetPayload<{
@@ -66,6 +77,11 @@ const DISTRIBUTION_INCLUDE = {
   },
   tournament: { select: { id: true, name: true } },
   payout: { select: { id: true, status: true, currency: true } },
+  prizeAwards: {
+    select: { status: true, settlementVersion: true },
+    orderBy: { settlementVersion: 'desc' as const },
+    take: 1,
+  },
 } satisfies Prisma.TournamentRegistrationInclude;
 
 export type RegistrationWithPayout = Prisma.TournamentRegistrationGetPayload<{
@@ -123,8 +139,12 @@ export interface PayoutStatsRow {
  */
 export type ClaimOutcome =
   | { outcome: 'CLAIMED' }
+  | { outcome: 'RESUMED' }
   | { outcome: 'NOT_CLAIMED'; payout: PayoutWithRelations }
   | { outcome: 'NOT_FOUND' };
+
+/** A live request gets this long before another process may recover its work. */
+export const PAYOUT_PROCESSING_RECOVERY_MS = 30_000;
 
 export interface MarkPaidInput {
   payoutId: string;
@@ -436,7 +456,14 @@ export class PayoutsRepository {
       where: {
         tournamentId,
         placement: { not: null },
-        ...(currency ? { payout: { currency } } : {}),
+        ...(currency
+          ? {
+              OR: [
+                { payout: { currency } },
+                ...(currency.toLowerCase() === 'usd' ? [{ payout: null }] : []),
+              ],
+            }
+          : {}),
       },
       include: DISTRIBUTION_INCLUDE,
       orderBy: [{ placement: 'asc' }, { id: 'asc' }],
@@ -479,20 +506,33 @@ export class PayoutsRepository {
     adminId: string,
     from: readonly PayoutStatus[],
   ): Promise<number> {
-    const result = await this.prisma.payout.updateMany({
-      where: { id, status: { in: [...from] } },
-      data: {
-        status: PayoutStatus.APPROVED,
-        approvedAt: new Date(),
-        approvedByAdminId: adminId,
-        // Approval clears whatever was holding it; a new block must be a new
-        // decision, not a stale string on a now-approved row.
-        blockerReason: null,
-        failureReason: null,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const result = await tx.payout.updateMany({
+        where: { id, status: { in: [...from] } },
+        data: {
+          status: PayoutStatus.APPROVED,
+          approvedAt: now,
+          approvedByAdminId: adminId,
+          blockerReason: null,
+          failureReason: null,
+        },
+      });
+      if (result.count === 1) {
+        await tx.withdrawalRequest.updateMany({
+          where: {
+            payout: { id },
+            status: WithdrawalRequestStatus.PENDING_REVIEW,
+          },
+          data: {
+            status: WithdrawalRequestStatus.APPROVED,
+            approvedAt: now,
+            reviewReason: null,
+          },
+        });
+      }
+      return result.count;
     });
-
-    return result.count;
   }
 
   async cancel(
@@ -500,12 +540,45 @@ export class PayoutsRepository {
     reason: string,
     from: readonly PayoutStatus[],
   ): Promise<number> {
-    const result = await this.prisma.payout.updateMany({
-      where: { id, status: { in: [...from] } },
-      data: { status: PayoutStatus.CANCELLED, blockerReason: reason },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.payout.updateMany({
+        where: { id, status: { in: [...from] } },
+        data: { status: PayoutStatus.CANCELLED, blockerReason: reason },
+      });
+      if (result.count !== 1) return result.count;
 
-    return result.count;
+      const withdrawal = await tx.withdrawalRequest.findFirst({
+        where: { payout: { id }, releaseTransactionId: null },
+      });
+      if (!withdrawal) return result.count;
+
+      const release = await recordLedgerEntry(tx, {
+        userId: withdrawal.userId,
+        type: TransactionType.REFUND,
+        amount: withdrawal.amount,
+        status: TransactionStatus.COMPLETED,
+        reference: `withdrawal-release:${withdrawal.id}`,
+        payoutId: id,
+        description: 'Declined withdrawal reservation released',
+      });
+      if (release.outcome !== 'RECORDED') {
+        throw new PayoutLedgerError(`WITHDRAWAL_RELEASE_${release.outcome}`);
+      }
+      await tx.withdrawalRequest.update({
+        where: { id: withdrawal.id },
+        data: {
+          status: WithdrawalRequestStatus.DECLINED,
+          reviewReason: reason,
+          declinedAt: new Date(),
+          releaseTransactionId: release.transaction.id,
+        },
+      });
+      await tx.transaction.update({
+        where: { id: withdrawal.reservationTransactionId },
+        data: { status: TransactionStatus.REVERSED },
+      });
+      return result.count;
+    });
   }
 
   /**
@@ -529,6 +602,25 @@ export class PayoutsRepository {
       return { outcome: 'CLAIMED' };
     }
 
+    // A process can stop after Stripe accepted the idempotent transfer but
+    // before markPaid committed. Reclaim only stale work, and refresh the
+    // timestamp atomically so exactly one recovery worker reaches Stripe.
+    const resumed = await this.prisma.payout.updateMany({
+      where: {
+        id,
+        status: PayoutStatus.PROCESSING,
+        stripeTransferId: null,
+        processedAt: {
+          lte: new Date(Date.now() - PAYOUT_PROCESSING_RECOVERY_MS),
+        },
+      },
+      data: { processedAt: new Date() },
+    });
+
+    if (resumed.count === 1) {
+      return { outcome: 'RESUMED' };
+    }
+
     const payout = await this.findById(id);
 
     return payout
@@ -548,8 +640,12 @@ export class PayoutsRepository {
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
 
-      await tx.payout.update({
-        where: { id: input.payoutId },
+      const claimed = await tx.payout.updateMany({
+        where: {
+          id: input.payoutId,
+          status: { in: [PayoutStatus.PROCESSING, PayoutStatus.APPROVED] },
+          stripeTransferId: null,
+        },
         data: {
           status: PayoutStatus.PAID,
           stripeTransferId: input.stripeTransferId,
@@ -558,14 +654,75 @@ export class PayoutsRepository {
         },
       });
 
-      const ledger = await recordLedgerEntry(tx, input.ledger);
+      if (claimed.count !== 1) {
+        const [payout, transaction] = await Promise.all([
+          tx.payout.findUnique({
+            where: { id: input.payoutId },
+            include: PAYOUT_INCLUDE,
+          }),
+          tx.transaction.findFirst({
+            where: {
+              payoutId: input.payoutId,
+              type: { in: [TransactionType.PRIZE, TransactionType.WITHDRAWAL] },
+            },
+          }),
+        ]);
 
-      if (ledger.outcome !== 'RECORDED') {
-        // A credit cannot be short of funds, so this is only reachable if the
-        // recipient vanished between the transfer and this write. Throwing
-        // rolls the PAID update back with it.
-        throw new PayoutLedgerError(ledger.outcome);
+        // Two recovery workers can receive the same Stripe transfer because
+        // they use the same idempotency key. The database loser returns the
+        // already-committed result instead of crediting the player again.
+        if (
+          payout?.status === PayoutStatus.PAID &&
+          payout.stripeTransferId === input.stripeTransferId &&
+          transaction
+        ) {
+          return { outcome: 'PAID' as const, payout, transaction };
+        }
+
+        throw new PayoutLedgerError('PAYOUT_NOT_PROCESSABLE');
       }
+
+      const withdrawal = await tx.withdrawalRequest.findFirst({
+        where: { payout: { id: input.payoutId } },
+      });
+      if (withdrawal) {
+        const transaction = await tx.transaction.update({
+          where: { id: withdrawal.reservationTransactionId },
+          data: { status: TransactionStatus.COMPLETED },
+        });
+        const payout = await tx.payout.findUniqueOrThrow({
+          where: { id: input.payoutId },
+          include: PAYOUT_INCLUDE,
+        });
+        return { outcome: 'PAID' as const, payout, transaction };
+      }
+
+      const owner = await tx.user.findUnique({
+        where: { id: input.ledger.userId },
+        select: { balance: true },
+      });
+
+      if (!owner) throw new PayoutLedgerError('USER_NOT_FOUND');
+
+      // Stripe already sent this money externally. Keep the real amount in
+      // transaction history, while leaving the spendable wallet unchanged so
+      // the same prize cannot also be spent inside the application.
+      const transaction = await tx.transaction.create({
+        data: {
+          userId: input.ledger.userId,
+          type: input.ledger.type,
+          status: input.ledger.status ?? TransactionStatus.COMPLETED,
+          amount: toMoney(input.ledger.amount),
+          balanceBefore: owner.balance,
+          balanceAfter: owner.balance,
+          affectsBalance: false,
+          description: input.ledger.description ?? null,
+          reference: input.ledger.reference ?? null,
+          tournamentId: input.ledger.tournamentId ?? null,
+          payoutId: input.ledger.payoutId ?? null,
+          createdByAdminId: input.ledger.createdByAdminId ?? null,
+        },
+      });
 
       const payout = await tx.payout.findUniqueOrThrow({
         where: { id: input.payoutId },
@@ -575,7 +732,7 @@ export class PayoutsRepository {
       return {
         outcome: 'PAID' as const,
         payout,
-        transaction: ledger.transaction,
+        transaction,
       };
     });
   }
@@ -611,6 +768,35 @@ export class PayoutsRepository {
     });
   }
 
+  async syncStripeDestination(
+    userId: string,
+    accountId: string,
+    verified: boolean,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const existingMethods = await tx.payoutMethodAccount.count({
+        where: { userId },
+      });
+      return tx.payoutMethodAccount.upsert({
+        where: {
+          userId_method: { userId, method: PayoutMethod.STRIPE_CONNECT },
+        },
+        create: {
+          userId,
+          method: PayoutMethod.STRIPE_CONNECT,
+          label: 'Stripe Connect',
+          reference: accountId,
+          isVerified: verified,
+          isDefault: existingMethods === 0,
+        },
+        update: {
+          reference: accountId,
+          isVerified: verified,
+        },
+      });
+    });
+  }
+
   /** Webhook path: the account id is all Stripe gives us to match on. */
   /**
    * Records Stripe's verdict on a connected account.
@@ -638,6 +824,18 @@ export class PayoutsRepository {
       });
     }
 
+    const user = await this.prisma.user.findUnique({
+      where: { stripeConnectAccountId: accountId },
+      select: { id: true },
+    });
+    if (user) {
+      await this.syncStripeDestination(
+        user.id,
+        accountId,
+        status === StripeAccountStatus.VERIFIED,
+      );
+    }
+
     return result.count;
   }
 
@@ -650,7 +848,7 @@ export class PayoutsRepository {
    */
   async markSettled(stripeTransferId: string): Promise<number> {
     const result = await this.prisma.payout.updateMany({
-      where: { stripeTransferId, settledAt: null },
+      where: { stripeTransferId, status: PayoutStatus.PAID, settledAt: null },
       data: { settledAt: new Date() },
     });
 
@@ -666,12 +864,129 @@ export class PayoutsRepository {
     });
   }
 
-  async markFailed(id: string, reason: string): Promise<void> {
-    await this.prisma.payout.updateMany({
-      where: { id, status: { in: [PayoutStatus.PROCESSING] } },
+  async markFailed(id: string, reason: string): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.payout.updateMany({
+        where: {
+          id,
+          status: { in: [PayoutStatus.PROCESSING, PayoutStatus.PAID] },
+        },
+        data: {
+          status: PayoutStatus.FAILED,
+          paidAt: null,
+          settledAt: null,
+          failureReason: reason.slice(0, 500),
+        },
+      });
+
+      if (result.count > 0) {
+        const withdrawal = await tx.withdrawalRequest.findFirst({
+          where: { payout: { id }, releaseTransactionId: null },
+        });
+        if (withdrawal) {
+          const release = await recordLedgerEntry(tx, {
+            userId: withdrawal.userId,
+            type: TransactionType.REFUND,
+            amount: withdrawal.amount,
+            status: TransactionStatus.COMPLETED,
+            reference: `withdrawal-release:${withdrawal.id}`,
+            payoutId: id,
+            description: 'Failed withdrawal reservation released',
+          });
+          if (release.outcome !== 'RECORDED') {
+            throw new PayoutLedgerError(
+              `WITHDRAWAL_RELEASE_${release.outcome}`,
+            );
+          }
+          await tx.withdrawalRequest.update({
+            where: { id: withdrawal.id },
+            data: {
+              reviewReason: reason.slice(0, 500),
+              releaseTransactionId: release.transaction.id,
+            },
+          });
+          await tx.transaction.update({
+            where: { id: withdrawal.reservationTransactionId },
+            data: { status: TransactionStatus.REVERSED },
+          });
+        }
+        await tx.transaction.updateMany({
+          where: { payoutId: id, affectsBalance: false },
+          data: { status: TransactionStatus.FAILED },
+        });
+      }
+
+      return result.count;
+    });
+  }
+
+  /** Claims a Stripe event once, while allowing a previously failed event to retry. */
+  async claimStripeWebhook(event: {
+    id: string;
+    type: string;
+    data: { object: Record<string, unknown> };
+  }): Promise<boolean> {
+    try {
+      await this.prisma.webhookEvent.create({
+        data: {
+          eventId: event.id,
+          source: 'STRIPE',
+          type: event.type,
+          payload: JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue,
+          status: WebhookEventStatus.RECEIVED,
+        },
+      });
+      return true;
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== 'P2002'
+      ) {
+        throw error;
+      }
+
+      const retried = await this.prisma.webhookEvent.updateMany({
+        where: {
+          eventId: event.id,
+          source: 'STRIPE',
+          status: WebhookEventStatus.FAILED,
+        },
+        data: {
+          status: WebhookEventStatus.RECEIVED,
+          errorMessage: null,
+          processedAt: null,
+          attempts: { increment: 1 },
+        },
+      });
+
+      return retried.count === 1;
+    }
+  }
+
+  async markStripeWebhookProcessed(eventId: string): Promise<void> {
+    await this.prisma.webhookEvent.updateMany({
+      where: {
+        eventId,
+        source: 'STRIPE',
+        status: WebhookEventStatus.RECEIVED,
+      },
+      data: { status: WebhookEventStatus.PROCESSED, processedAt: new Date() },
+    });
+  }
+
+  async markStripeWebhookFailed(
+    eventId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.prisma.webhookEvent.updateMany({
+      where: {
+        eventId,
+        source: 'STRIPE',
+        status: WebhookEventStatus.RECEIVED,
+      },
       data: {
-        status: PayoutStatus.FAILED,
-        failureReason: reason.slice(0, 500),
+        status: WebhookEventStatus.FAILED,
+        errorMessage: reason.slice(0, 500),
       },
     });
   }
