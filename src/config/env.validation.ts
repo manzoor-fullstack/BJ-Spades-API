@@ -95,4 +95,8 @@ export const envValidationSchema = Joi.object({
   // Number of reverse proxies between the public client and this API. Zero is
   // the safe default for direct exposure and local development.
   TRUSTED_PROXY_HOPS: Joi.number().integer().min(0).max(10).default(0),
+
+  // Swagger stays off by default in production and can be enabled explicitly
+  // for deployments where the API documentation must be available.
+  SWAGGER_ENABLED: Joi.string().valid('true', 'false'),
 });
