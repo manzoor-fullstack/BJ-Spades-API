@@ -918,6 +918,7 @@ describe('Tournaments API (integration)', () => {
       const token = await adminToken();
       const tournament = await seedTournament(seededAdminId, {
         status: TournamentStatus.IN_PROGRESS,
+        prizePool: new Prisma.Decimal('750.25'),
       });
       const winner = await seedUser();
       await testPrisma.tournamentRegistration.create({
@@ -947,6 +948,7 @@ describe('Tournaments API (integration)', () => {
 
       const tournament = await seedTournament(seededAdminId, {
         status: TournamentStatus.IN_PROGRESS,
+        prizePool: new Prisma.Decimal('750.25'),
       });
       const [winner, runnerUp] = await Promise.all([seedUser(), seedUser()]);
 
@@ -990,6 +992,37 @@ describe('Tournaments API (integration)', () => {
       expect(balances.every((row) => row.balance.toFixed(2) === '0.00')).toBe(
         true,
       );
+    });
+
+    it('rejects prizes above the funded tournament pool', async () => {
+      const token = await adminToken();
+      const tournament = await seedTournament(seededAdminId, {
+        status: TournamentStatus.IN_PROGRESS,
+        prizePool: new Prisma.Decimal('500.00'),
+      });
+      const winner = await seedUser();
+
+      await testPrisma.tournamentRegistration.create({
+        data: { tournamentId: tournament.id, userId: winner.id },
+      });
+
+      await request(server())
+        .post(`/api/tournaments/${tournament.id}/results`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          results: [{ userId: winner.id, placement: 1, prizeWon: '500.01' }],
+        })
+        .expect(422);
+
+      await expect(
+        testPrisma.payout.count({ where: { tournamentId: tournament.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        testPrisma.tournament.findUniqueOrThrow({
+          where: { id: tournament.id },
+          select: { status: true },
+        }),
+      ).resolves.toEqual({ status: TournamentStatus.IN_PROGRESS });
     });
   });
 

@@ -16,6 +16,7 @@ import {
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { TournamentProgressionService } from '../tournaments/tournament-progression.service';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { SubmitGameCommandDto } from './dto/submit-game-command.dto';
 import {
@@ -96,7 +97,10 @@ function statusFor(state: SpadesState): GameMatchStatus {
 
 @Injectable()
 export class MatchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tournamentProgression: TournamentProgressionService,
+  ) {}
 
   async create(playerId: string, input: CreateMatchDto) {
     if (input.opponentIds.includes(playerId)) {
@@ -481,6 +485,9 @@ export class MatchesService {
         },
         include: matchInclude,
       });
+      if (ended && updated.tournamentId) {
+        await this.tournamentProgression.applyCompletedMatch(tx, updated.id);
+      }
       return { ...this.viewFor(updated, playerId, true), duplicate: false };
     });
   }

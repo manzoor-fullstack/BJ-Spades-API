@@ -221,6 +221,12 @@ export const ACTIVITY_ACTIONS = {
     title: 'Tournament results submitted',
     isHighPriority: false,
   },
+  TOURNAMENT_RESULTS_CORRECTED: {
+    category: ActivityCategory.TOURNAMENT,
+    code: 'tournament.results_corrected',
+    title: 'Tournament results corrected',
+    isHighPriority: true,
+  },
 
   REWARD_CREATED: {
     category: ActivityCategory.REWARD,

@@ -89,6 +89,7 @@ describe('activity action catalogue', () => {
     'tournament.player_registered': 'Player registered for tournament',
     'tournament.player_removed': 'Player removed from tournament',
     'tournament.results_submitted': 'Tournament results submitted',
+    'tournament.results_corrected': 'Tournament results corrected',
     'reward.created': 'Reward created',
     'reward.updated': 'Reward updated',
     'reward.deleted': 'Reward deleted',
@@ -146,6 +147,7 @@ describe('activity action catalogue', () => {
     // are not.
     'tournament.cancelled',
     'tournament.deleted',
+    'tournament.results_corrected',
     // Both catalogue deletes remove an offer players may already have seen.
     // `merchandise.variant_removed` joins them because a variant has no
     // `deletedAt` — it is a hard delete that takes its SKU and stock with it.

@@ -61,9 +61,20 @@ const PLAYER_REGISTRATION_SELECT = {
   entryAttempt: true,
 } satisfies Prisma.TournamentRegistrationSelect;
 
+const PLAYER_MATCH_SELECT = {
+  select: {
+    id: true,
+    status: true,
+    tournamentRound: true,
+    tournamentSlot: true,
+    seats: { select: { userId: true } },
+  },
+} satisfies Prisma.GameMatchFindManyArgs;
+
 const PLAYER_TOURNAMENT_INCLUDE = {
   image: true,
   registrations: { select: PLAYER_REGISTRATION_SELECT },
+  gameMatches: PLAYER_MATCH_SELECT,
   _count: {
     select: {
       registrations: {
@@ -262,6 +273,15 @@ export class TournamentsRepository {
           where: { userId },
           select: PLAYER_REGISTRATION_SELECT,
         },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
+        },
       },
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }, { id: 'asc' }],
       take: 200,
@@ -287,6 +307,15 @@ export class TournamentsRepository {
           where: { userId },
           select: PLAYER_REGISTRATION_SELECT,
         },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
+        },
       },
     });
   }
@@ -299,6 +328,15 @@ export class TournamentsRepository {
         registrations: {
           where: { userId },
           select: PLAYER_REGISTRATION_SELECT,
+        },
+        gameMatches: {
+          ...PLAYER_MATCH_SELECT,
+          where: {
+            status: { in: ['BIDDING', 'PLAYING'] },
+            seats: { some: { userId } },
+          },
+          orderBy: [{ tournamentRound: 'desc' }, { tournamentSlot: 'asc' }],
+          take: 1,
         },
       },
       orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],

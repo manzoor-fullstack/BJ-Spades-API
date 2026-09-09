@@ -67,6 +67,20 @@ enum RegistrationStatus {
   DISQUALIFIED
 }
 
+enum TournamentTeamStatus {
+  ACTIVE
+  ELIMINATED
+  CHAMPION
+  RUNNER_UP
+  DISQUALIFIED
+}
+
+enum TournamentPrizeAwardStatus {
+  HELD
+  CREDITED
+  REVERSED
+}
+
 enum GameMatchStatus {
   BIDDING
   PLAYING
@@ -403,36 +417,37 @@ model User {
   webhookEventId String?       @unique
   webhookEvent   WebhookEvent? @relation(fields: [webhookEventId], references: [id])
 
-  registrations       TournamentRegistration[]
-  hostedTournaments   Tournament[]             @relation("PlayerHostedTournaments")
-  payouts             Payout[]
-  transactions        Transaction[]
-  securityAlerts      SecurityAlert[]
-  prizeClaims         PrizeClaim[]
-  disputes            Dispute[]
-  verification        PlayerVerification?
-  payoutMethods       PayoutMethodAccount[]
-  taxDocuments        TaxDocument[]
-  shipments           Shipment[]
-  credential          PlayerCredential?
-  playerSessions      PlayerSession[]
-  deposits            Deposit[]
-  paymentMethods      PlayerPaymentMethod[]
-  playerEmailTokens   PlayerEmailToken[]
-  oauthAccounts       PlayerOAuthAccount[]
-  playerProfile       PlayerProfile?
-  createdGameMatches  GameMatch[]              @relation("GameMatchCreator")
-  gameSeats           GameSeat[]
-  gameCommands        GameCommand[]
-  gameEvents          GameEvent[]              @relation("GameEventActor")
-  friendshipsAsFirst  PlayerFriendship[]       @relation("FriendshipFirst")
-  friendshipsAsSecond PlayerFriendship[]       @relation("FriendshipSecond")
-  friendshipRequests  PlayerFriendship[]       @relation("FriendshipRequester")
-  blocksCreated       PlayerBlock[]            @relation("BlockCreator")
-  blocksReceived      PlayerBlock[]            @relation("BlockTarget")
-  playerPresence      PlayerPresence?
-  challengesSent      GameChallenge[]          @relation("ChallengeSender")
-  challengesReceived  GameChallenge[]          @relation("ChallengeRecipient")
+  registrations         TournamentRegistration[]
+  tournamentPrizeAwards TournamentPrizeAward[]
+  hostedTournaments     Tournament[]             @relation("PlayerHostedTournaments")
+  payouts               Payout[]
+  transactions          Transaction[]
+  securityAlerts        SecurityAlert[]
+  prizeClaims           PrizeClaim[]
+  disputes              Dispute[]
+  verification          PlayerVerification?
+  payoutMethods         PayoutMethodAccount[]
+  taxDocuments          TaxDocument[]
+  shipments             Shipment[]
+  credential            PlayerCredential?
+  playerSessions        PlayerSession[]
+  deposits              Deposit[]
+  paymentMethods        PlayerPaymentMethod[]
+  playerEmailTokens     PlayerEmailToken[]
+  oauthAccounts         PlayerOAuthAccount[]
+  playerProfile         PlayerProfile?
+  createdGameMatches    GameMatch[]              @relation("GameMatchCreator")
+  gameSeats             GameSeat[]
+  gameCommands          GameCommand[]
+  gameEvents            GameEvent[]              @relation("GameEventActor")
+  friendshipsAsFirst    PlayerFriendship[]       @relation("FriendshipFirst")
+  friendshipsAsSecond   PlayerFriendship[]       @relation("FriendshipSecond")
+  friendshipRequests    PlayerFriendship[]       @relation("FriendshipRequester")
+  blocksCreated         PlayerBlock[]            @relation("BlockCreator")
+  blocksReceived        PlayerBlock[]            @relation("BlockTarget")
+  playerPresence        PlayerPresence?
+  challengesSent        GameChallenge[]          @relation("ChallengeSender")
+  challengesReceived    GameChallenge[]          @relation("ChallengeRecipient")
 
   /// Soft delete. Hard-deleting a user referenced by transactions or
   /// tournament registrations would destroy financial history.
@@ -804,18 +819,28 @@ model Tournament {
   cancelledAt  DateTime?
   cancelReason String?
 
+  bracketStartedAt  DateTime?
+  bracketSeed       String?   @db.VarChar(64)
+  bracketRounds     Int?
+  prizeRuleVersion  String    @default("team-70-30-v1") @db.VarChar(40)
+  settlementVersion Int       @default(0)
+  settledAt         DateTime?
+
   createdByAdminId String?
   createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
 
   createdByPlayerId String?
   createdByPlayer   User?   @relation("PlayerHostedTournaments", fields: [createdByPlayerId], references: [id])
 
-  registrations TournamentRegistration[]
-  payouts       Payout[]
-  transactions  Transaction[]
-  prizeClaims   PrizeClaim[]
-  disputes      Dispute[]
-  gameMatches   GameMatch[]
+  registrations     TournamentRegistration[]
+  payouts           Payout[]
+  transactions      Transaction[]
+  prizeClaims       PrizeClaim[]
+  disputes          Dispute[]
+  gameMatches       GameMatch[]
+  teams             TournamentTeam[]
+  prizeAwards       TournamentPrizeAward[]
+  resultCorrections TournamentResultCorrection[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -852,12 +877,87 @@ model TournamentRegistration {
   payout   Payout? @relation(fields: [payoutId], references: [id])
   payoutId String?
 
+  teamId String?
+  team   TournamentTeam? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  prizeAwards TournamentPrizeAward[]
+
   /// Makes double-registration impossible at the database level rather than
   /// relying on a check-then-insert race in application code. Two simultaneous
   /// registrations for the last slot are resolved here, not by luck.
   @@unique([tournamentId, userId])
   @@index([userId])
   @@index([tournamentId, status])
+  @@index([teamId])
+}
+
+model TournamentTeam {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  seed            Int
+  status          TournamentTeamStatus @default(ACTIVE)
+  placement       Int?
+  eliminatedRound Int?
+
+  registrations TournamentRegistration[]
+  seats         GameSeat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tournamentId, seed])
+  @@index([tournamentId, status])
+}
+
+model TournamentPrizeAward {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+
+  registrationId String
+  registration   TournamentRegistration @relation(fields: [registrationId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  placement         Int
+  amount            Decimal                    @db.Decimal(18, 2)
+  settlementVersion Int
+  status            TournamentPrizeAwardStatus
+  holdReason        String?
+  correctionReason  String?
+
+  transactionId String?      @unique
+  transaction   Transaction? @relation("TournamentPrizeCredit", fields: [transactionId], references: [id], onDelete: Restrict)
+
+  reversalTransactionId String?      @unique
+  reversalTransaction   Transaction? @relation("TournamentPrizeReversal", fields: [reversalTransactionId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tournamentId, userId, settlementVersion])
+  @@index([tournamentId, status])
+  @@index([userId, createdAt])
+}
+
+model TournamentResultCorrection {
+  id String @id @default(uuid())
+
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+
+  requestId         String   @db.VarChar(80)
+  reason            String
+  settlementVersion Int
+  createdAt         DateTime @default(now())
+
+  @@unique([tournamentId, requestId])
+  @@index([tournamentId, createdAt])
 }
 
 model GameMatch {
@@ -872,6 +972,10 @@ model GameMatch {
 
   tournamentId String?
   tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
+  tournamentRound Int?
+  tournamentSlot  Int?
+  resultAppliedAt DateTime?
 
   /// Full authoritative snapshot. API serializers expose only the requesting
   /// seat's hand; other hands never leave the service boundary.
@@ -894,6 +998,7 @@ model GameMatch {
   updatedAt DateTime @updatedAt
 
   @@unique([createdByPlayerId, creationRequestId])
+  @@unique([tournamentId, tournamentRound, tournamentSlot])
   @@index([status, updatedAt])
   @@index([tournamentId, status])
 }
@@ -910,6 +1015,9 @@ model GameSeat {
   seat Int
   team Int
 
+  tournamentTeamId String?
+  tournamentTeam   TournamentTeam? @relation(fields: [tournamentTeamId], references: [id], onDelete: Restrict)
+
   entryTokenHash      String?   @db.VarChar(64)
   entryTokenExpiresAt DateTime?
   joinedAt            DateTime?
@@ -920,6 +1028,7 @@ model GameSeat {
   @@unique([matchId, seat])
   @@unique([matchId, userId])
   @@index([userId, createdAt])
+  @@index([tournamentTeamId])
 }
 
 model GameCommand {
@@ -1138,6 +1247,9 @@ model Transaction {
 
   createdByAdminId String?
   createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
+
+  tournamentPrizeCredit   TournamentPrizeAward? @relation("TournamentPrizeCredit")
+  tournamentPrizeReversal TournamentPrizeAward? @relation("TournamentPrizeReversal")
 
   createdAt DateTime @default(now())
 

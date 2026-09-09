@@ -58,6 +58,8 @@ export function toPlayerTournament(
       tournament._count.registrations < tournament.maxPlayers,
     canCancelRegistration: isRegistered && isOpen && !isHostedByMe,
     canCancelTournament: isHostedByMe && isOpen,
+    activeMatchId: tournament.gameMatches[0]?.id ?? null,
+    canEnterMatch: tournament.gameMatches.length > 0,
     placement: registration?.placement ?? null,
     prizeWon:
       registration?.prizeWon === null || registration?.prizeWon === undefined
@@ -93,8 +95,9 @@ export function playerTournamentDashboard(
   );
   const scheduled = items.filter(
     (item) =>
-      OPEN_STATUSES.has(item.status) &&
-      new Date(item.startsAt).getTime() > now.getTime() &&
+      ((OPEN_STATUSES.has(item.status) &&
+        new Date(item.startsAt).getTime() > now.getTime()) ||
+        item.status === TournamentStatus.IN_PROGRESS) &&
       (item.isRegistered || item.isHostedByMe),
   );
   const past = items.filter(

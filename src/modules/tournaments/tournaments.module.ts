@@ -9,6 +9,7 @@ import { TournamentsController } from './tournaments.controller';
 import { TournamentsService } from './tournaments.service';
 import { PlayerTournamentsController } from './player-tournaments.controller';
 import { PlayerTournamentsService } from './player-tournaments.service';
+import { TournamentProgressionService } from './tournament-progression.service';
 
 @Module({
   imports: [
@@ -25,7 +26,12 @@ import { PlayerTournamentsService } from './player-tournaments.service';
     TournamentsService,
     TournamentsRepository,
     PlayerTournamentsService,
+    TournamentProgressionService,
   ],
-  exports: [TournamentsService, TournamentsRepository],
+  exports: [
+    TournamentsService,
+    TournamentsRepository,
+    TournamentProgressionService,
+  ],
 })
 export class TournamentsModule {}

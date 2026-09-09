@@ -1816,6 +1816,7 @@ describe('Payouts API (integration)', () => {
       const tournament = await seedTournament(seededAdminId, {
         status: TournamentStatus.IN_PROGRESS,
         entryFee: new Prisma.Decimal('0.00'),
+        prizePool: new Prisma.Decimal('1000.25'),
       });
 
       await testPrisma.tournamentRegistration.createMany({

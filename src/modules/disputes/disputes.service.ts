@@ -8,6 +8,7 @@ import { DisputeStatus } from '@prisma/client';
 import { buildPaginationMeta } from '../../common/dto/pagination.dto';
 import type { Paginated } from '../../common/interceptors/transform.interceptor';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
+import { TournamentProgressionService } from '../tournaments/tournament-progression.service';
 
 import { QueryDisputesDto, ResolveDisputeDto } from './dto/dispute.dto';
 import { DisputesRepository } from './repositories/disputes.repository';
@@ -23,7 +24,10 @@ import type {
 
 @Injectable()
 export class DisputesService {
-  constructor(private readonly repository: DisputesRepository) {}
+  constructor(
+    private readonly repository: DisputesRepository,
+    private readonly tournamentProgression: TournamentProgressionService,
+  ) {}
 
   async findAll(
     query: QueryDisputesDto,
@@ -78,6 +82,11 @@ export class DisputesService {
     const dispute = await this.getOrThrow(id);
 
     if (!OPEN_DISPUTE_STATUSES.includes(dispute.status)) {
+      if (dispute.status === status) {
+        await this.reconcileTournamentResolution(dispute, status);
+        return toDisputeListItem(dispute);
+      }
+
       throw new UnprocessableEntityException(
         `Case ${dispute.caseNumber} is already ${dispute.status.toLowerCase().replace('_', ' ')} and cannot be resolved again.`,
       );
@@ -91,13 +100,41 @@ export class DisputesService {
     );
 
     if (count === 0) {
-      // Somebody else resolved it between the read and the write.
+      const resolved = await this.getOrThrow(id);
+      if (resolved.status === status) {
+        await this.reconcileTournamentResolution(resolved, status);
+        return toDisputeListItem(resolved);
+      }
+
       throw new UnprocessableEntityException(
         'The case was resolved while you were reviewing it. Reload and retry.',
       );
     }
 
-    return toDisputeListItem(await this.getOrThrow(id));
+    const resolved = await this.getOrThrow(id);
+    await this.reconcileTournamentResolution(resolved, status);
+    return toDisputeListItem(resolved);
+  }
+
+  private async reconcileTournamentResolution(
+    dispute: DisputeWithRelations,
+    status: DisputeStatus,
+  ): Promise<void> {
+    if (!dispute.tournamentId) return;
+
+    if (status === DisputeStatus.DISQUALIFIED) {
+      await this.tournamentProgression.disqualifyPlayer(
+        dispute.tournamentId,
+        dispute.userId,
+        dispute.caseNumber,
+      );
+      return;
+    }
+
+    await this.tournamentProgression.releaseHeldAwards(
+      dispute.tournamentId,
+      dispute.userId,
+    );
   }
 
   private async getOrThrow(id: string): Promise<DisputeWithRelations> {
