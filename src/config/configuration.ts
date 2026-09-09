@@ -6,6 +6,10 @@ export default () => ({
     uploadDir: process.env.UPLOAD_DIR,
     corsOrigins: process.env.CORS_ORIGINS,
     trustedProxyHops: parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10),
+    swaggerEnabled:
+      process.env.SWAGGER_ENABLED === undefined
+        ? process.env.NODE_ENV !== 'production'
+        : process.env.SWAGGER_ENABLED === 'true',
   },
 
   database: {
