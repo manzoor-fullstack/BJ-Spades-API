@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 
 import { MatchesService } from '../matches/matches.service';
+import { LeaderboardService } from '../leaderboards/leaderboard.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
 
@@ -57,6 +58,7 @@ export class PlayerSocialService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly matches: MatchesService,
+    private readonly leaderboards: LeaderboardService,
   ) {}
 
   async heartbeat(playerId: string) {
@@ -91,7 +93,7 @@ export class PlayerSocialService {
         ? friendship.playerTwoId
         : friendship.playerOneId,
     );
-    const [presences, busySeats, challenges] = await Promise.all([
+    const [presences, busySeats, challenges, rankings] = await Promise.all([
       this.prisma.playerPresence.findMany({
         where: { userId: { in: friendIds } },
         select: { userId: true, heartbeatAt: true },
@@ -125,6 +127,7 @@ export class PlayerSocialService {
         },
         orderBy: { createdAt: 'desc' },
       }),
+      this.leaderboards.entriesFor(friendIds),
     ]);
     const presenceByUser = new Map(
       presences.map((presence) => [presence.userId, presence.heartbeatAt]),
@@ -141,6 +144,7 @@ export class PlayerSocialService {
           item.challengerId === friend.id || item.challengedId === friend.id,
       );
       const heartbeatAt = presenceByUser.get(friend.id);
+      const ranking = rankings.get(friend.id);
       const status = busy.has(friend.id)
         ? 'INGAME'
         : heartbeatAt && heartbeatAt.getTime() > now.getTime() - PRESENCE_TTL_MS
@@ -156,6 +160,9 @@ export class PlayerSocialService {
         avatarName: friend.playerProfile?.avatarName ?? 'Ace of Spades',
         avatarBackground: friend.playerProfile?.avatarBackground ?? '#7c3aed',
         tier: friend.tier,
+        elo: ranking?.rating ?? null,
+        winRate: ranking?.winRate ?? null,
+        rankingTier: ranking?.tier ?? null,
         status,
         challenge: challenge
           ? {

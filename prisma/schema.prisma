@@ -476,6 +476,10 @@ model PlayerProfile {
   dateOfBirth DateTime? @db.Date
   location    String?   @db.VarChar(120)
 
+  /// Players may hide their public ranking card while retaining their own
+  /// authenticated statistics. Hidden profiles never appear in leaderboards.
+  leaderboardVisible Boolean @default(true)
+
   avatarName       String      @default("Poppa Cool") @db.VarChar(40)
   avatarBackground String      @default("#fbbf24") @db.VarChar(7)
   avatarImageId    String?     @unique
