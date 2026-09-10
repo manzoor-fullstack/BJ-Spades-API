@@ -36,6 +36,14 @@ export class UpdateMerchandiseDto {
   })
   price?: string;
 
+  @ApiPropertyOptional({ example: '200.00' })
+  @IsOptional()
+  @IsString()
+  @Matches(MONEY_PATTERN, {
+    message: 'tokenCost must be a non-negative amount with up to 2 decimals',
+  })
+  tokenCost?: string;
+
   @ApiPropertyOptional({ maxLength: 2000 })
   @IsOptional()
   @IsString()

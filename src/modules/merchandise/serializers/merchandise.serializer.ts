@@ -41,6 +41,7 @@ export interface MerchandiseListItem {
   name: string;
   description: string | null;
   price: string;
+  tokenCost: string;
   image: MerchandiseImage | null;
   status: ItemStatus;
   variantCount: number;
@@ -81,6 +82,7 @@ export function toMerchandiseListItem(
     name: merchandise.name,
     description: merchandise.description,
     price: formatMoney(merchandise.price),
+    tokenCost: formatMoney(merchandise.tokenCost),
     image: merchandise.image
       ? {
           id: merchandise.image.id,

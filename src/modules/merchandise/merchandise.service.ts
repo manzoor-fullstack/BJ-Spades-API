@@ -122,6 +122,7 @@ export class MerchandiseService {
       name: dto.productName.trim(),
       description: emptyToNull(dto.description),
       price,
+      tokenCost: dto.tokenCost ? assertPrice(dto.tokenCost) : price.mul(5),
       imageId: asset?.id ?? null,
       status: dto.status ?? ItemStatus.ACTIVE,
       createdByAdminId: admin.id,
@@ -171,6 +172,10 @@ export class MerchandiseService {
 
     if (dto.price !== undefined) {
       data.price = assertPrice(dto.price);
+    }
+
+    if (dto.tokenCost !== undefined) {
+      data.tokenCost = assertPrice(dto.tokenCost);
     }
 
     if (dto.status !== undefined) {

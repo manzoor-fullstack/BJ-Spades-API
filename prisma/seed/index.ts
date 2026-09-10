@@ -11,6 +11,8 @@ import { seedAdmin } from './admin.seed';
 import { seedUsers } from './users.seed';
 import { seedTournaments } from './tournaments.seed';
 import { seedRewards } from './rewards.seed';
+import { seedAnimations } from './animations.seed';
+import { seedLessons } from './lessons.seed';
 import {
   seedClaimsAndDisputes,
   seedFulfilment,
@@ -39,6 +41,8 @@ async function main() {
   await seedTournaments(prisma);
   // Must run after seedAdmin: every reward and product records its creator.
   await seedRewards(prisma);
+  await seedAnimations(prisma);
+  await seedLessons(prisma);
   // Must run after seedUsers and seedTournaments: claims and cases reference
   // both.
   await seedClaimsAndDisputes(prisma);

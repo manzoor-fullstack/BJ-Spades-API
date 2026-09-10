@@ -94,6 +94,18 @@ export class CreateMerchandiseDto {
   })
   price: string;
 
+  @ApiPropertyOptional({
+    example: '200.00',
+    description:
+      'Player token price. Defaults to five tokens per USD when omitted.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(MONEY_PATTERN, {
+    message: 'tokenCost must be a non-negative amount with up to 2 decimals',
+  })
+  tokenCost?: string;
+
   @ApiPropertyOptional({ maxLength: 2000 })
   @IsOptional()
   @IsString()

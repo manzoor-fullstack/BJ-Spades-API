@@ -112,4 +112,15 @@ describe('DisputesService tournament reconciliation', () => {
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(progression.releaseHeldAwards).not.toHaveBeenCalled();
   });
+
+  it('rejects a changed resolution note after the dispute is resolved', async () => {
+    repository.findById.mockResolvedValue(
+      disputeFixture(DisputeStatus.CLEARED),
+    );
+
+    await expect(
+      service.clear('dispute-1', { note: 'Trying again.' }, admin),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(progression.releaseHeldAwards).not.toHaveBeenCalled();
+  });
 });

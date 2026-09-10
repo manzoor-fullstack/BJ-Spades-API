@@ -59,6 +59,7 @@ function merchandiseFixture(
     name: 'Team Jersey',
     description: null,
     price: new Prisma.Decimal('39.95'),
+    tokenCost: new Prisma.Decimal('199.75'),
     imageId: null,
     image: null,
     status: ItemStatus.ACTIVE,

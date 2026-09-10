@@ -86,6 +86,10 @@ export const envValidationSchema = Joi.object({
 
   STRIPE_WEBHOOK_SECRET: Joi.string().allow(''),
 
+  // Optional at boot so catalogue and purchase flows remain available. Manual
+  // fulfilment fails closed until a 32-byte base64 key is configured.
+  REWARD_CODE_ENCRYPTION_KEY: Joi.string().allow(''),
+
   UPLOAD_DIR: Joi.string().required(),
 
   PUBLIC_URL: Joi.string().required(),

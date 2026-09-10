@@ -1,4 +1,10 @@
-import { Injectable, Module, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Module,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import {
   Body,
   Controller,
@@ -10,7 +16,14 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Prisma, ShipmentStatus } from '@prisma/client';
+import {
+  ActivityCategory,
+  ItemStatus,
+  Prisma,
+  ShipmentStatus,
+  TransactionStatus,
+  TransactionType,
+} from '@prisma/client';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
@@ -21,6 +34,11 @@ import {
 } from 'class-validator';
 
 import { PERMISSION_CODES } from '../../common/constants/permissions';
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
+import {
+  AuditLog,
+  readString,
+} from '../../common/decorators/audit-log.decorator';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import {
   buildPaginationMeta,
@@ -34,6 +52,7 @@ import {
 import { CurrentAdmin } from '../auth/decorators/current-admin.decorator';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { recordLedgerEntry } from '../transactions/repositories/transactions.repository';
 
 /* ----------------------------------------------------------------- shapes */
 
@@ -60,7 +79,7 @@ type ShipmentWithRelations = Prisma.ShipmentGetPayload<{
   include: typeof SHIPMENT_INCLUDE;
 }>;
 
-/** The destination, assembled from the address already held on `User`. */
+/** The immutable destination snapshot stored on the shipment. */
 export interface ShippingAddress {
   line1: string | null;
   line2: string | null;
@@ -101,7 +120,12 @@ function toShipmentItem(shipment: ShipmentWithRelations): ShipmentItem {
 
   // A parcel needs a street, a city and a country at minimum. Anything less
   // and "Create shipment" would produce an undeliverable record.
-  const isComplete = Boolean(user.addressLine1 && user.city && user.country);
+  const isComplete = Boolean(
+    shipment.addressLine1 &&
+    shipment.city &&
+    shipment.postalCode &&
+    shipment.country,
+  );
 
   return {
     id: shipment.id,
@@ -112,12 +136,12 @@ function toShipmentItem(shipment: ShipmentWithRelations): ShipmentItem {
       email: user.email,
     },
     address: {
-      line1: user.addressLine1,
-      line2: user.addressLine2,
-      city: user.city,
-      state: user.state,
-      postalCode: user.postalCode,
-      country: user.country,
+      line1: shipment.addressLine1 || null,
+      line2: shipment.addressLine2,
+      city: shipment.city || null,
+      state: shipment.state || null,
+      postalCode: shipment.postalCode || null,
+      country: shipment.country || null,
       isComplete,
     },
     merchandiseName: shipment.merchandise.name,
@@ -240,53 +264,141 @@ export class ShipmentsService {
     dto: CreateShipmentDto,
     admin: AuthenticatedAdmin,
   ): Promise<ShipmentItem> {
-    const shipment = await this.prisma.shipment.create({
-      data: {
-        userId: dto.userId,
-        merchandiseId: dto.merchandiseId,
-        variantId: dto.variantId ?? null,
-        customisation: dto.customisation?.trim() || null,
-        createdByAdminId: admin.id,
-      },
-      include: SHIPMENT_INCLUDE,
+    const shipment = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: dto.userId } });
+      if (!user) throw new NotFoundException(`User ${dto.userId} not found`);
+      if (
+        !user.addressLine1 ||
+        !user.city ||
+        !user.postalCode ||
+        !user.country
+      ) {
+        throw new UnprocessableEntityException(
+          'The player needs a complete street, city, postal code and country before shipment creation.',
+        );
+      }
+
+      const merchandise = await tx.merchandise.findFirst({
+        where: {
+          id: dto.merchandiseId,
+          deletedAt: null,
+          status: ItemStatus.ACTIVE,
+        },
+      });
+      if (!merchandise) {
+        throw new NotFoundException(
+          `Merchandise ${dto.merchandiseId} not found`,
+        );
+      }
+      if (!dto.variantId) {
+        throw new UnprocessableEntityException(
+          'A merchandise variant is required.',
+        );
+      }
+      const variant = await tx.merchandiseVariant.findFirst({
+        where: { id: dto.variantId, merchandiseId: merchandise.id },
+      });
+      if (!variant) {
+        throw new UnprocessableEntityException(
+          'The selected variant does not belong to this product.',
+        );
+      }
+      const reserved = await tx.merchandiseVariant.updateMany({
+        where: { id: variant.id, stock: { gt: 0 } },
+        data: { stock: { decrement: 1 } },
+      });
+      if (reserved.count !== 1) {
+        throw new ConflictException('The selected variant is out of stock.');
+      }
+
+      return tx.shipment.create({
+        data: {
+          userId: dto.userId,
+          merchandiseId: dto.merchandiseId,
+          variantId: variant.id,
+          customisation: dto.customisation?.trim() || null,
+          tokenCost: 0,
+          shippingName: joinFullName(user.firstName, user.lastName),
+          addressLine1: user.addressLine1,
+          addressLine2: user.addressLine2,
+          city: user.city,
+          state: user.state ?? '',
+          postalCode: user.postalCode,
+          country: user.country,
+          createdByAdminId: admin.id,
+        },
+        include: SHIPMENT_INCLUDE,
+      });
     });
 
     return toShipmentItem(shipment);
   }
 
   async update(id: string, dto: UpdateShipmentDto): Promise<ShipmentItem> {
-    const existing = await this.prisma.shipment.findUnique({ where: { id } });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.shipment.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException(`Shipment ${id} not found`);
 
-    if (!existing) throw new NotFoundException(`Shipment ${id} not found`);
-
-    const data: Prisma.ShipmentUpdateInput = {};
-
-    if (dto.carrier !== undefined) data.carrier = dto.carrier.trim() || null;
-    if (dto.trackingNumber !== undefined) {
-      data.trackingNumber = dto.trackingNumber.trim() || null;
-    }
-
-    if (dto.status !== undefined) {
-      data.status = dto.status;
-
-      // Stamp the moment the status first says so, and only then: an operator
-      // correcting a typo on a delivered parcel must not move its date.
-      if (dto.status === ShipmentStatus.IN_TRANSIT && !existing.shippedAt) {
-        data.shippedAt = new Date();
+      const data: Prisma.ShipmentUncheckedUpdateInput = {};
+      if (dto.carrier !== undefined) data.carrier = dto.carrier.trim() || null;
+      if (dto.trackingNumber !== undefined) {
+        data.trackingNumber = dto.trackingNumber.trim() || null;
       }
 
-      if (dto.status === ShipmentStatus.DELIVERED && !existing.deliveredAt) {
-        data.deliveredAt = new Date();
+      if (dto.status !== undefined && dto.status !== existing.status) {
+        const allowed: Record<ShipmentStatus, ShipmentStatus[]> = {
+          [ShipmentStatus.PENDING]: [
+            ShipmentStatus.IN_TRANSIT,
+            ShipmentStatus.CANCELLED,
+          ],
+          [ShipmentStatus.IN_TRANSIT]: [ShipmentStatus.DELIVERED],
+          [ShipmentStatus.DELIVERED]: [],
+          [ShipmentStatus.CANCELLED]: [],
+        };
+        if (!allowed[existing.status].includes(dto.status)) {
+          throw new ConflictException(
+            `Shipment cannot move from ${existing.status} to ${dto.status}.`,
+          );
+        }
+        data.status = dto.status;
+        if (dto.status === ShipmentStatus.IN_TRANSIT && !existing.shippedAt) {
+          data.shippedAt = new Date();
+        }
+        if (dto.status === ShipmentStatus.DELIVERED && !existing.deliveredAt) {
+          data.deliveredAt = new Date();
+        }
+        if (dto.status === ShipmentStatus.CANCELLED) {
+          data.cancelledAt = new Date();
+          if (existing.variantId) {
+            await tx.merchandiseVariant.update({
+              where: { id: existing.variantId },
+              data: { stock: { increment: 1 } },
+            });
+          }
+          if (existing.purchaseTransactionId && !existing.refundTransactionId) {
+            const refund = await recordLedgerEntry(tx, {
+              userId: existing.userId,
+              type: TransactionType.REFUND,
+              amount: existing.tokenCost,
+              status: TransactionStatus.COMPLETED,
+              reference: `merchandise-refund:${id}`,
+              description: 'Cancelled merchandise claim refunded by admin',
+            });
+            if (refund.outcome !== 'RECORDED') {
+              throw new Error(`Merchandise refund failed: ${refund.outcome}`);
+            }
+            data.refundTransactionId = refund.transaction.id;
+          }
+        }
       }
-    }
 
-    return toShipmentItem(
-      await this.prisma.shipment.update({
+      return tx.shipment.update({
         where: { id },
         data,
         include: SHIPMENT_INCLUDE,
-      }),
-    );
+      });
+    });
+    return toShipmentItem(updated);
   }
 }
 
@@ -313,6 +425,14 @@ export class ShipmentsController {
   }
 
   @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.MERCHANDISE,
+    action: ACTIVITY_ACTIONS.SHIPMENT_CREATED.code,
+    title: (_ctx, result) =>
+      `Shipment ${readString(result, 'id') ?? 'created'}`,
+    entityType: 'Shipment',
+    entityId: (_ctx, result) => readString(result, 'id'),
+  })
   @Post()
   @ApiOperation({
     summary:
@@ -327,6 +447,14 @@ export class ShipmentsController {
   }
 
   @RequirePermissions(PERMISSION_CODES.PAYOUTS_MANAGE)
+  @AuditLog({
+    category: ActivityCategory.MERCHANDISE,
+    action: ACTIVITY_ACTIONS.SHIPMENT_UPDATED.code,
+    title: (ctx) => `Shipment ${ctx.params.id} updated`,
+    entityType: 'Shipment',
+    entityId: (ctx) => ctx.params.id,
+    metadata: (ctx) => ({ submitted: ctx.body }),
+  })
   @Patch(':id')
   @ApiOperation({
     summary:

@@ -160,8 +160,56 @@ enum TransactionType {
   WITHDRAWAL
   ENTRY_FEE
   PRIZE
+  REWARD_PURCHASE
+  MERCHANDISE_PURCHASE
+  ANIMATION_PURCHASE
   ADJUSTMENT
   REFUND
+}
+
+enum AnimationCategory {
+  WIN_VICTORY
+  CARD_PLAY
+  NIL
+  TRASH_TALK
+  EMOTES
+  STREAK
+  PENALTY
+}
+
+enum AnimationEntitlementSource {
+  PURCHASE
+  VIP
+  ACHIEVEMENT
+}
+
+enum LessonDifficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum LessonProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum PlayerNotificationType {
+  SYSTEM
+  TOURNAMENT
+  WALLET
+  REWARD
+  LEARNING
+  MEMBERSHIP
+}
+
+enum PlayerMembershipStatus {
+  WAITLISTED
+  ACTIVE
+  CANCELLED
+  EXPIRED
 }
 
 enum TransactionStatus {
@@ -205,6 +253,21 @@ enum RewardCategory {
   SHOPPING
   TECH
   TRAVEL
+}
+
+enum RewardRedemptionStatus {
+  PENDING_FULFILLMENT
+  FULFILLED
+  REDEEMED
+  CANCELLED
+  REFUNDED
+  EXPIRED
+}
+
+enum RewardDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
 }
 
 enum ActivityCategory {
@@ -429,6 +492,13 @@ model User {
   hostedTournaments     Tournament[]             @relation("PlayerHostedTournaments")
   payouts               Payout[]
   transactions          Transaction[]
+  rewardRedemptions     RewardRedemption[]
+  animationEntitlements PlayerAnimationEntitlement[]
+  learningProgress      LessonProgress[]
+  notifications         PlayerNotification[]
+  notificationPreference PlayerNotificationPreference?
+  earlyAccessLead       EarlyAccessLead?
+  membership            PlayerMembership?
   securityAlerts        SecurityAlert[]
   prizeClaims           PrizeClaim[]
   disputes              Dispute[]
@@ -1114,6 +1184,16 @@ model Reward {
   /// Reserved for Milestone 2 redemption; stays 0 for now.
   redeemedCount Int  @default(0)
 
+  /// Numeric player-facing contract. A null value keeps legacy/admin-only
+  /// catalogue rows out of the player store until an operator prices them.
+  denomination   Decimal?  @db.Decimal(18, 2)
+  tokenCost      Decimal?  @db.Decimal(18, 2)
+  bonusPercent   Int       @default(0)
+  availableFrom  DateTime?
+  availableUntil DateTime?
+
+  redemptions RewardRedemption[]
+
   createdByAdminId String
   createdByAdmin   Admin  @relation(fields: [createdByAdminId], references: [id])
 
@@ -1138,6 +1218,10 @@ model Merchandise {
   /// Money is NUMERIC and formatted at the display layer. The mock showed
   /// "$39.95" as a string; storing it that way makes arithmetic impossible.
   price Decimal @db.Decimal(18, 2)
+
+  /// Token price used by the player catalogue. It is snapshotted onto a
+  /// shipment when claimed so later catalogue edits do not rewrite history.
+  tokenCost Decimal @default(0) @db.Decimal(18, 2)
 
   imageId String?
   image   MediaAsset? @relation(fields: [imageId], references: [id])
@@ -1269,12 +1353,231 @@ model Transaction {
   tournamentPrizeReversal TournamentPrizeAward? @relation("TournamentPrizeReversal")
   withdrawalReservation   WithdrawalRequest?    @relation("WithdrawalReservation")
   withdrawalRelease       WithdrawalRequest?    @relation("WithdrawalRelease")
+  rewardPurchase          RewardRedemption?     @relation("RewardPurchase")
+  rewardRefund            RewardRedemption?     @relation("RewardRefund")
+  merchandisePurchase     Shipment?             @relation("MerchandisePurchase")
+  merchandiseRefund       Shipment?             @relation("MerchandiseRefund")
+  animationPurchase       PlayerAnimationEntitlement? @relation("AnimationPurchase")
 
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([type, status])
   @@index([createdAt])
+}
+
+model Animation {
+  id String @id @default(uuid())
+
+  name        String
+  description String?
+  category    AnimationCategory
+  price       Decimal @db.Decimal(18, 2)
+  assetUrl    String
+  effectKey   String
+  featured    Boolean @default(false)
+  vipOnly     Boolean @default(false)
+  status      ItemStatus @default(ACTIVE)
+
+  entitlements PlayerAnimationEntitlement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, category])
+  @@index([featured, status])
+}
+
+model PlayerAnimationEntitlement {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  animationId String
+  animation   Animation @relation(fields: [animationId], references: [id], onDelete: Restrict)
+
+  source      AnimationEntitlementSource
+  pricePaid   Decimal @default(0) @db.Decimal(18, 2)
+  requestId   String?
+  payloadHash String?
+
+  purchaseTransactionId String?      @unique
+  purchaseTransaction   Transaction? @relation("AnimationPurchase", fields: [purchaseTransactionId], references: [id])
+
+  equippedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, animationId])
+  @@unique([userId, requestId])
+  @@index([userId, equippedAt])
+}
+
+model Lesson {
+  id String @id @default(uuid())
+
+  slug            String @unique
+  title           String
+  description     String
+  durationMinutes Int
+  difficulty      LessonDifficulty
+  moduleCount     Int
+  mediaUrl        String
+  content         Json
+  contentVersion  Int @default(1)
+  requiredTier    UserTier @default(PLAYER)
+  status          ItemStatus @default(ACTIVE)
+
+  progress LessonProgress[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, difficulty])
+}
+
+model LessonProgress {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Restrict)
+
+  status         LessonProgressStatus @default(NOT_STARTED)
+  currentSection Int @default(0)
+  contentVersion Int
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, lessonId])
+  @@index([userId, status])
+}
+
+model PlayerNotification {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type       PlayerNotificationType @default(SYSTEM)
+  title      String
+  message    String
+  targetPage String?
+  targetId   String?
+  eventKey   String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, eventKey])
+  @@index([userId, readAt, createdAt])
+}
+
+model PlayerNotificationPreference {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  inAppEnabled Boolean @default(true)
+  emailEnabled Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EarlyAccessLead {
+  id String @id @default(uuid())
+
+  userId String? @unique
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  email     String @unique
+  source    String @default("PLAYER_APP")
+  consentAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlayerMembership {
+  id String @id @default(uuid())
+
+  userId String @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tier       UserTier
+  status     PlayerMembershipStatus @default(WAITLISTED)
+  startedAt  DateTime?
+  expiresAt  DateTime?
+  cancelledAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, expiresAt])
+}
+
+/// A player's durable, idempotent gift-card order. Price and denomination are
+/// snapshots so later catalogue edits never rewrite financial history.
+model RewardRedemption {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  rewardId String
+  reward   Reward @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+
+  requestId   String
+  payloadHash String
+
+  denomination Decimal                @db.Decimal(18, 2)
+  tokenCost    Decimal                @db.Decimal(18, 2)
+  status       RewardRedemptionStatus @default(PENDING_FULFILLMENT)
+
+  purchaseTransactionId String       @unique
+  purchaseTransaction   Transaction  @relation("RewardPurchase", fields: [purchaseTransactionId], references: [id])
+  refundTransactionId   String?      @unique
+  refundTransaction     Transaction? @relation("RewardRefund", fields: [refundTransactionId], references: [id])
+
+  delivery RewardDelivery?
+
+  fulfilledAt DateTime?
+  redeemedAt  DateTime?
+  cancelledAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, requestId])
+  @@index([userId, createdAt])
+  @@index([rewardId, status])
+  @@index([status, createdAt])
+}
+
+/// Supplier/manual fulfilment metadata. The bearer code is AES-GCM encrypted;
+/// only the owning player's detail serializer decrypts it.
+model RewardDelivery {
+  id String @id @default(uuid())
+
+  redemptionId String           @unique
+  redemption   RewardRedemption @relation(fields: [redemptionId], references: [id], onDelete: Cascade)
+
+  status            RewardDeliveryStatus @default(PENDING)
+  supplierReference String?              @unique
+  encryptedCode     String?
+  failureReason     String?
+  deliveredAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([status, createdAt])
 }
 
 /// One player-initiated Stripe Checkout attempt. Money is credited only after
@@ -1738,6 +2041,28 @@ model Shipment {
   /// Personalisation the player asked for, e.g. an engraved name.
   customisation String?
 
+  /// Present for player claims. Admin-created legacy fulfilment rows may omit
+  /// it, while the composite unique key makes client retries idempotent.
+  requestId   String?
+  payloadHash String?
+
+  tokenCost Decimal @default(0) @db.Decimal(18, 2)
+
+  purchaseTransactionId String?      @unique
+  purchaseTransaction   Transaction? @relation("MerchandisePurchase", fields: [purchaseTransactionId], references: [id])
+  refundTransactionId   String?      @unique
+  refundTransaction     Transaction? @relation("MerchandiseRefund", fields: [refundTransactionId], references: [id])
+
+  /// Immutable delivery snapshot. A profile edit after purchase must never
+  /// redirect an existing fulfilment obligation.
+  shippingName String  @default("")
+  addressLine1 String  @default("")
+  addressLine2 String?
+  city         String  @default("")
+  state        String  @default("")
+  postalCode   String  @default("")
+  country      String  @default("")
+
   status ShipmentStatus @default(PENDING)
 
   carrier        String?
@@ -1745,6 +2070,7 @@ model Shipment {
 
   shippedAt   DateTime?
   deliveredAt DateTime?
+  cancelledAt DateTime?
 
   createdByAdminId String?
   createdByAdmin   Admin?  @relation(fields: [createdByAdminId], references: [id])
@@ -1754,6 +2080,7 @@ model Shipment {
 
   @@index([status, createdAt])
   @@index([userId])
+  @@unique([userId, requestId])
 }
 
 /// The platform's on-chain treasury balance, as recorded by an admin.

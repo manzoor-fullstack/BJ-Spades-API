@@ -32,6 +32,9 @@ interface RewardSeed {
   status: ItemStatus;
   /** null means unlimited — correct for a digital gift-card code. */
   stock: number | null;
+  denomination: string | null;
+  tokenCost: string | null;
+  bonusPercent: number;
 }
 
 interface VariantSeed {
@@ -47,6 +50,7 @@ interface MerchandiseSeed {
   name: string;
   description: string;
   price: string;
+  tokenCost: string;
   status: ItemStatus;
   variants: VariantSeed[];
 }
@@ -62,6 +66,9 @@ const REWARDS: RewardSeed[] = [
     terms: 'One redemption per player per calendar month. No cash value.',
     status: ItemStatus.ACTIVE,
     stock: null,
+    denomination: '10.00',
+    tokenCost: '10.00',
+    bonusPercent: 8,
   },
   {
     id: '33333333-3333-4333-8333-000000000002',
@@ -75,6 +82,9 @@ const REWARDS: RewardSeed[] = [
     // Deliberately at the low-stock threshold, so the indicator has something
     // to show without anyone editing data by hand.
     stock: 5,
+    denomination: '20.00',
+    tokenCost: '20.00',
+    bonusPercent: 4,
   },
   {
     id: '33333333-3333-4333-8333-000000000003',
@@ -86,6 +96,9 @@ const REWARDS: RewardSeed[] = [
     terms: 'US shipping addresses only. Colour subject to availability.',
     status: ItemStatus.ACTIVE,
     stock: 12,
+    denomination: null,
+    tokenCost: null,
+    bonusPercent: 0,
   },
   {
     id: '33333333-3333-4333-8333-000000000004',
@@ -97,6 +110,9 @@ const REWARDS: RewardSeed[] = [
     terms: 'Non-refundable. Subject to the issuer terms.',
     status: ItemStatus.INACTIVE,
     stock: 0,
+    denomination: '50.00',
+    tokenCost: '50.00',
+    bonusPercent: 5,
   },
   {
     id: '33333333-3333-4333-8333-000000000005',
@@ -108,6 +124,9 @@ const REWARDS: RewardSeed[] = [
     terms: 'Blackout dates apply. Booking required 30 days in advance.',
     status: ItemStatus.COMING_SOON,
     stock: null,
+    denomination: null,
+    tokenCost: null,
+    bonusPercent: 0,
   },
   {
     id: '33333333-3333-4333-8333-000000000006',
@@ -119,6 +138,9 @@ const REWARDS: RewardSeed[] = [
     terms: 'Credited within 24 hours of redemption.',
     status: ItemStatus.ACTIVE,
     stock: 250,
+    denomination: null,
+    tokenCost: null,
+    bonusPercent: 0,
   },
 ];
 
@@ -128,6 +150,7 @@ const MERCHANDISE: MerchandiseSeed[] = [
     name: 'Team Jersey',
     description: 'Breathable knit jersey with the club crest.',
     price: '39.95',
+    tokenCost: '200.00',
     status: ItemStatus.ACTIVE,
     variants: [
       {
@@ -158,6 +181,7 @@ const MERCHANDISE: MerchandiseSeed[] = [
     name: 'Snapback Cap',
     description: 'One-size adjustable cap, embroidered logo.',
     price: '24.00',
+    tokenCost: '120.00',
     status: ItemStatus.ACTIVE,
     variants: [
       {
@@ -181,6 +205,7 @@ const MERCHANDISE: MerchandiseSeed[] = [
     name: 'Limited Edition Card Deck',
     description: 'Foil-stamped deck, numbered run of 500.',
     price: '15.50',
+    tokenCost: '80.00',
     status: ItemStatus.COMING_SOON,
     variants: [
       {
@@ -217,6 +242,11 @@ export async function seedRewards(prisma: PrismaClient) {
       terms: seed.terms,
       status: seed.status,
       stock: seed.stock,
+      denomination: seed.denomination
+        ? new Prisma.Decimal(seed.denomination)
+        : null,
+      tokenCost: seed.tokenCost ? new Prisma.Decimal(seed.tokenCost) : null,
+      bonusPercent: seed.bonusPercent,
       deletedAt: null,
       createdByAdminId: admin.id,
     };
@@ -237,6 +267,7 @@ export async function seedRewards(prisma: PrismaClient) {
       name: seed.name,
       description: seed.description,
       price: new Prisma.Decimal(seed.price),
+      tokenCost: new Prisma.Decimal(seed.tokenCost),
       status: seed.status,
       deletedAt: null,
       createdByAdminId: admin.id,

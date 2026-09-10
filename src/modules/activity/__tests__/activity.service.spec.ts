@@ -99,6 +99,8 @@ describe('activity action catalogue', () => {
     'merchandise.variant_added': 'Merchandise variant added',
     'merchandise.variant_updated': 'Merchandise variant updated',
     'merchandise.variant_removed': 'Merchandise variant removed',
+    'shipment.created': 'Shipment created',
+    'shipment.updated': 'Shipment updated',
     'payout.approved': 'Payout approved',
     'payout.processed': 'Payout processed',
     'payout.cancelled': 'Payout cancelled',
@@ -207,6 +209,8 @@ describe('activity action catalogue', () => {
     'sponsor.created': ActivityCategory.PAYOUT,
     'sponsor.updated': ActivityCategory.PAYOUT,
     'sponsor.deleted': ActivityCategory.PAYOUT,
+    'shipment.created': ActivityCategory.MERCHANDISE,
+    'shipment.updated': ActivityCategory.MERCHANDISE,
   };
 
   it('every catalogued code produces the expected title', () => {
