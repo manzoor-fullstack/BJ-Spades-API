@@ -31,6 +31,11 @@ import { LeaderboardModule } from './modules/leaderboards/leaderboard.module';
 import { PlayerWalletModule } from './modules/player-wallet/player-wallet.module';
 import { PlayerDepositsModule } from './modules/player-deposits/player-deposits.module';
 import { PlayerWithdrawalsModule } from './modules/player-withdrawals/player-withdrawals.module';
+import { PlayerRewardsModule } from './modules/player-rewards/player-rewards.module';
+import { PlayerMerchandiseModule } from './modules/player-merchandise/player-merchandise.module';
+import { PlayerAnimationsModule } from './modules/player-animations/player-animations.module';
+import { PlayerLearningModule } from './modules/player-learning/player-learning.module';
+import { PlayerEngagementModule } from './modules/player-engagement/player-engagement.module';
 import { ShipmentsModule } from './modules/shipments/shipments.module';
 import { TaxModule } from './modules/tax/tax.module';
 import { VerificationModule } from './modules/verification/verification.module';
@@ -104,6 +109,16 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     PlayerDepositsModule,
 
     PlayerWithdrawalsModule,
+
+    PlayerRewardsModule,
+
+    PlayerMerchandiseModule,
+
+    PlayerAnimationsModule,
+
+    PlayerLearningModule,
+
+    PlayerEngagementModule,
 
     MatchesModule,
 

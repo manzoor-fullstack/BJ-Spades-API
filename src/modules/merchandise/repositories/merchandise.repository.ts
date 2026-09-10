@@ -57,6 +57,7 @@ export interface CreateMerchandiseData {
   name: string;
   description: string | null;
   price: Money;
+  tokenCost: Money;
   imageId: string | null;
   status: ItemStatus;
   createdByAdminId: string;
@@ -66,6 +67,7 @@ export interface UpdateMerchandiseData {
   name?: string;
   description?: string | null;
   price?: Money;
+  tokenCost?: Money;
   imageId?: string | null;
   status?: ItemStatus;
 }

@@ -288,6 +288,18 @@ export const ACTIVITY_ACTIONS = {
     // its SKU and stock count with it, unlike the soft-deleted product above.
     isHighPriority: true,
   },
+  SHIPMENT_CREATED: {
+    category: ActivityCategory.MERCHANDISE,
+    code: 'shipment.created',
+    title: 'Shipment created',
+    isHighPriority: false,
+  },
+  SHIPMENT_UPDATED: {
+    category: ActivityCategory.MERCHANDISE,
+    code: 'shipment.updated',
+    title: 'Shipment updated',
+    isHighPriority: false,
+  },
 
   // Every payout action is high priority without exception: these are the only
   // rows in the system that correspond to money leaving the platform, and an

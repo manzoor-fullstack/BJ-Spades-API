@@ -82,7 +82,11 @@ export class DisputesService {
     const dispute = await this.getOrThrow(id);
 
     if (!OPEN_DISPUTE_STATUSES.includes(dispute.status)) {
-      if (dispute.status === status) {
+      const isExactRetry =
+        dispute.status === status &&
+        dispute.resolvedByAdminId === admin.id &&
+        dispute.resolutionNote === dto.note.trim();
+      if (isExactRetry) {
         await this.reconcileTournamentResolution(dispute, status);
         return toDisputeListItem(dispute);
       }
