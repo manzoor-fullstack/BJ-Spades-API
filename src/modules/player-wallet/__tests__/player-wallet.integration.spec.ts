@@ -45,11 +45,6 @@ describe('Player wallet API (integration)', () => {
       .send({ username, email: address, password: 'StrongPass123' })
       .expect(202);
     await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token: email.tokens.get(address) })
-      .expect(200);
-    await agent
       .post('/api/player/v1/auth/login')
       .set('Origin', ORIGIN)
       .send({ email: address, password: 'StrongPass123', rememberMe: false })

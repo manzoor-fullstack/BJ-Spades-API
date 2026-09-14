@@ -55,11 +55,6 @@ describe('Player profile API (integration)', () => {
         password: 'StrongPass123',
       })
       .expect(202);
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token: email.token })
-      .expect(200);
     const login = await agent
       .post('/api/player/v1/auth/login')
       .set('Origin', ORIGIN)
