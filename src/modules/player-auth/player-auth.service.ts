@@ -36,7 +36,7 @@ import { PlayerTokenService } from './services/player-token.service';
 
 const INVALID_CREDENTIALS = 'Invalid email or password.';
 const REGISTRATION_MESSAGE =
-  'If this address can be registered, a verification link has been sent.';
+  'Account created successfully. You can now sign in.';
 const RESET_MESSAGE =
   'If an eligible account exists, a password reset link has been sent.';
 const REFRESH_REUSE_GRACE_MS = 5_000;
@@ -98,17 +98,12 @@ export class PlayerAuthService implements OnModuleInit {
       existing?.status === UserStatus.DELETED ||
       existing?.status === UserStatus.SUSPENDED
     ) {
-      if (existing?.credential && !existing.emailVerified) {
-        await this.sendVerification(existing);
-      }
       return { message: REGISTRATION_MESSAGE };
     }
 
     const passwordHash = await this.passwords.hash(dto.password);
-    let user: PlayerWithCredential;
-
     try {
-      user = await this.repository.attachCredential({
+      await this.repository.attachCredential({
         email,
         username,
         passwordHash,
@@ -123,7 +118,6 @@ export class PlayerAuthService implements OnModuleInit {
       throw error;
     }
 
-    await this.sendVerification(user);
     return { message: REGISTRATION_MESSAGE };
   }
 
@@ -436,17 +430,6 @@ export class PlayerAuthService implements OnModuleInit {
     }
 
     return { message: 'Password changed. Sign in with your new password.' };
-  }
-
-  private async sendVerification(user: PlayerWithCredential): Promise<void> {
-    const token = randomHex(32);
-    await this.repository.createEmailToken({
-      userId: user.id,
-      purpose: PlayerEmailTokenPurpose.VERIFY_EMAIL,
-      tokenHash: hashToken(token),
-      expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
-    });
-    await this.email.verification(user.email, token);
   }
 
   private async linkOAuthWithUniqueUsername(

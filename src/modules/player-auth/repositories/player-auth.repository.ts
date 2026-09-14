@@ -184,7 +184,18 @@ export class PlayerAuthRepository {
             lastName: '',
             email: input.email,
             source: UserSource.PLAYER,
-            status: UserStatus.PENDING,
+            status: UserStatus.ACTIVE,
+            emailVerified: true,
+            emailVerifiedAt: new Date(),
+          },
+        });
+      } else if (user.status === UserStatus.PENDING || !user.emailVerified) {
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: {
+            status: UserStatus.ACTIVE,
+            emailVerified: true,
+            emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
           },
         });
       }

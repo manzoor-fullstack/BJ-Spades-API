@@ -158,16 +158,8 @@ describe('Player authentication API (integration)', () => {
   ) {
     const signup = await register(agent, overrides).expect(202);
     expect((signup.body as { data: unknown }).data).toEqual({
-      message:
-        'If this address can be registered, a verification link has been sent.',
+      message: 'Account created successfully. You can now sign in.',
     });
-    const token = email.verificationMessages.at(-1)?.token;
-    expect(token).toHaveLength(64);
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token })
-      .expect(200);
     return {
       email: overrides.email ?? 'player@example.com',
       password: overrides.password ?? 'StrongPass123',
@@ -199,7 +191,7 @@ describe('Player authentication API (integration)', () => {
     return target.searchParams.get('state')!;
   }
 
-  it('registers, verifies once, signs in with HttpOnly cookies, and reads /me', async () => {
+  it('registers an active player, signs in with HttpOnly cookies, and reads /me', async () => {
     const agent = request.agent(server());
     await register(agent).expect(202);
 
@@ -208,26 +200,11 @@ describe('Player authentication API (integration)', () => {
       include: { credential: true },
     });
     expect(stored.source).toBe(UserSource.PLAYER);
-    expect(stored.status).toBe(UserStatus.PENDING);
-    expect(stored.emailVerified).toBe(false);
+    expect(stored.status).toBe(UserStatus.ACTIVE);
+    expect(stored.emailVerified).toBe(true);
+    expect(stored.emailVerifiedAt).toBeInstanceOf(Date);
     expect(stored.credential?.passwordHash).not.toBe('StrongPass123');
-
-    await login(agent, {
-      email: 'player@example.com',
-      password: 'StrongPass123',
-    }).expect(403);
-
-    const token = email.verificationMessages[0]?.token;
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token })
-      .expect(200);
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token })
-      .expect(401);
+    expect(email.verificationMessages).toHaveLength(0);
 
     const signedIn = await login(agent, {
       email: 'player@example.com',
@@ -273,11 +250,6 @@ describe('Player authentication API (integration)', () => {
       username: 'claimed_player',
       email: existing.email,
     }).expect(202);
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token: email.verificationMessages[0]?.token })
-      .expect(200);
 
     await expect(
       testPrisma.user.findUniqueOrThrow({
@@ -302,12 +274,6 @@ describe('Player authentication API (integration)', () => {
       password: 'DifferentPass456',
     }).expect(202);
     expect(second.body).toEqual(first.body);
-
-    await agent
-      .post('/api/player/v1/auth/verify-email')
-      .set('Origin', ORIGIN)
-      .send({ token: email.verificationMessages.at(-1)?.token })
-      .expect(200);
     await login(agent, {
       email: 'player@example.com',
       password: 'StrongPass123',
