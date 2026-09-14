@@ -8,6 +8,7 @@ import {
 import type { Server } from 'node:http';
 import request from 'supertest';
 
+import { ACTIVITY_ACTIONS } from '../../../common/constants/activity-actions';
 import { createTestApp } from '../../../../test/create-test-app';
 import { testPrisma } from '../../../../test/setup';
 import { PlayerEmailService } from '../services/player-email.service';
@@ -178,7 +179,7 @@ describe('Player authentication API (integration)', () => {
   }
 
   async function beginOAuth(
-    provider: 'google' | 'github' = 'google',
+    provider: 'google' | 'github' | 'facebook' = 'google',
     rememberMe = false,
   ): Promise<string> {
     const started = await request(server())
@@ -205,6 +206,22 @@ describe('Player authentication API (integration)', () => {
     expect(stored.emailVerifiedAt).toBeInstanceOf(Date);
     expect(stored.credential?.passwordHash).not.toBe('StrongPass123');
     expect(email.verificationMessages).toHaveLength(0);
+    await expect(
+      testPrisma.activityLog.findFirstOrThrow({
+        where: {
+          action: ACTIVITY_ACTIONS.USER_CREATED.code,
+          entityId: stored.id,
+        },
+      }),
+    ).resolves.toMatchObject({
+      title: 'player@example.com registered',
+      entityType: 'User',
+      metadata: {
+        email: 'player@example.com',
+        username: 'table_master',
+        source: 'PLAYER_APP',
+      },
+    });
 
     const signedIn = await login(agent, {
       email: 'player@example.com',
@@ -527,6 +544,11 @@ describe('Player authentication API (integration)', () => {
       .query({ state, code: 'valid-code' })
       .expect(302);
     expect(reused.headers.location).toBe('http://127.0.0.1:4173/?oauth=error');
+  });
+
+  it('accepts Facebook as a player OAuth provider', async () => {
+    const state = await beginOAuth('facebook');
+    expect(state).toHaveLength(64);
   });
 
   it('links a verified OAuth identity to the existing email profile', async () => {

@@ -90,20 +90,20 @@ export function playerTournamentDashboard(
     (item) =>
       item.id !== featured?.id &&
       item.visibility === 'PUBLIC' &&
-      OPEN_STATUSES.has(item.status) &&
+      item.status === TournamentStatus.REGISTERING &&
       new Date(item.startsAt).getTime() > now.getTime(),
   );
   const scheduled = items.filter(
     (item) =>
-      ((OPEN_STATUSES.has(item.status) &&
+      item.id !== featured?.id &&
+      ((item.status === TournamentStatus.SCHEDULED &&
         new Date(item.startsAt).getTime() > now.getTime()) ||
-        item.status === TournamentStatus.IN_PROGRESS) &&
-      (item.isRegistered || item.isHostedByMe),
+        (item.status === TournamentStatus.IN_PROGRESS &&
+          (item.visibility === 'PUBLIC' ||
+            item.isRegistered ||
+            item.isHostedByMe))),
   );
-  const past = items.filter(
-    (item) =>
-      Boolean(item.registrationStatus) && PAST_STATUSES.has(item.status),
-  );
+  const past = items.filter((item) => PAST_STATUSES.has(item.status));
   const totalWinnings = past.reduce(
     (sum, item) => (item.prizeWon ? sum.plus(item.prizeWon) : sum),
     new Prisma.Decimal(0),
@@ -116,7 +116,9 @@ export function playerTournamentDashboard(
     past,
     stats: {
       tournamentsPlayed: past.filter(
-        (item) => item.status === TournamentStatus.COMPLETED,
+        (item) =>
+          Boolean(item.registrationStatus) &&
+          item.status === TournamentStatus.COMPLETED,
       ).length,
       totalWinnings: formatMoney(totalWinnings),
       upcoming: upcoming.length + (featured ? 1 : 0),

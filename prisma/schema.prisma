@@ -38,6 +38,7 @@ enum PlayerEmailTokenPurpose {
 enum PlayerAuthProvider {
   GOOGLE
   GITHUB
+  FACEBOOK
 }
 
 enum WebhookEventStatus {

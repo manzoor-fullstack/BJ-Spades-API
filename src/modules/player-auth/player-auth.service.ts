@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  ActivityCategory,
   PlayerAuthProvider,
   PlayerEmailTokenPurpose,
   Prisma,
@@ -17,8 +18,10 @@ import ms, { type StringValue } from 'ms';
 import { createHash } from 'node:crypto';
 
 import { hashToken, randomHex } from '../../common/crypto/token-hash.util';
+import { ACTIVITY_ACTIONS } from '../../common/constants/activity-actions';
 import type { RequestContext } from '../../common/http/request-context.util';
 import { PasswordService } from '../../common/password/password.service';
+import { ActivityLogService } from '../activity/activity.service';
 import type { LoginPlayerDto } from './dto/login-player.dto';
 import type { PlayerSignupDto } from './dto/register-player.dto';
 import type { PlayerJwtPayload } from './interfaces/player-jwt-payload.interface';
@@ -76,6 +79,7 @@ export class PlayerAuthService implements OnModuleInit {
     private readonly tokens: PlayerTokenService,
     private readonly email: PlayerEmailService,
     private readonly config: ConfigService,
+    private readonly activityLog: ActivityLogService,
     @Inject(PLAYER_OAUTH_GATEWAY)
     private readonly oauth: PlayerOAuthGateway,
   ) {}
@@ -84,7 +88,10 @@ export class PlayerAuthService implements OnModuleInit {
     this.dummyHash = await this.passwords.hash(randomHex(16));
   }
 
-  async register(dto: PlayerSignupDto): Promise<{ message: string }> {
+  async register(
+    dto: PlayerSignupDto,
+    context: RequestContext,
+  ): Promise<{ message: string }> {
     const email = dto.email.trim().toLowerCase();
     const username = dto.username.trim().toLowerCase();
 
@@ -103,10 +110,21 @@ export class PlayerAuthService implements OnModuleInit {
 
     const passwordHash = await this.passwords.hash(dto.password);
     try {
-      await this.repository.attachCredential({
+      const user = await this.repository.attachCredential({
         email,
         username,
         passwordHash,
+      });
+      await this.activityLog.record({
+        category: ActivityCategory.USER,
+        action: ACTIVITY_ACTIONS.USER_CREATED.code,
+        title: `${email} registered`,
+        description: `${username} created a player account.`,
+        entityType: 'User',
+        entityId: user.id,
+        metadata: { email, username, source: 'PLAYER_APP' },
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
       });
     } catch (error) {
       if (

@@ -45,19 +45,25 @@ export class HttpPlayerOAuthGateway implements PlayerOAuthGateway {
     const url = new URL(
       input.provider === PlayerAuthProvider.GOOGLE
         ? 'https://accounts.google.com/o/oauth2/v2/auth'
-        : 'https://github.com/login/oauth/authorize',
+        : input.provider === PlayerAuthProvider.FACEBOOK
+          ? 'https://www.facebook.com/dialog/oauth'
+          : 'https://github.com/login/oauth/authorize',
     );
     url.searchParams.set('client_id', credentials.clientId);
     url.searchParams.set('redirect_uri', input.callbackUrl);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('state', input.state);
-    url.searchParams.set('code_challenge', input.codeChallenge);
-    url.searchParams.set('code_challenge_method', 'S256');
+    if (input.provider !== PlayerAuthProvider.FACEBOOK) {
+      url.searchParams.set('code_challenge', input.codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+    }
     url.searchParams.set(
       'scope',
       input.provider === PlayerAuthProvider.GOOGLE
         ? 'openid email profile'
-        : 'read:user user:email',
+        : input.provider === PlayerAuthProvider.FACEBOOK
+          ? 'email public_profile'
+          : 'read:user user:email',
     );
     if (input.provider === PlayerAuthProvider.GOOGLE) {
       url.searchParams.set('prompt', 'select_account');
@@ -75,21 +81,26 @@ export class HttpPlayerOAuthGateway implements PlayerOAuthGateway {
     const tokenUrl =
       input.provider === PlayerAuthProvider.GOOGLE
         ? 'https://oauth2.googleapis.com/token'
-        : 'https://github.com/login/oauth/access_token';
+        : input.provider === PlayerAuthProvider.FACEBOOK
+          ? 'https://graph.facebook.com/oauth/access_token'
+          : 'https://github.com/login/oauth/access_token';
+    const tokenParams = new URLSearchParams({
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+      code: input.code,
+      redirect_uri: input.callbackUrl,
+      grant_type: 'authorization_code',
+    });
+    if (input.provider !== PlayerAuthProvider.FACEBOOK) {
+      tokenParams.set('code_verifier', input.codeVerifier);
+    }
     const tokenResponse = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({
-        client_id: credentials.clientId,
-        client_secret: credentials.clientSecret,
-        code: input.code,
-        redirect_uri: input.callbackUrl,
-        code_verifier: input.codeVerifier,
-        grant_type: 'authorization_code',
-      }),
+      body: tokenParams,
       signal: AbortSignal.timeout(10_000),
     });
     const tokenBody = await this.json(tokenResponse);
@@ -98,9 +109,13 @@ export class HttpPlayerOAuthGateway implements PlayerOAuthGateway {
       throw new Error('OAuth code exchange failed');
     }
 
-    return input.provider === PlayerAuthProvider.GOOGLE
-      ? this.googleProfile(accessToken)
-      : this.githubProfile(accessToken);
+    if (input.provider === PlayerAuthProvider.GOOGLE) {
+      return this.googleProfile(accessToken);
+    }
+    if (input.provider === PlayerAuthProvider.FACEBOOK) {
+      return this.facebookProfile(accessToken);
+    }
+    return this.githubProfile(accessToken);
   }
 
   private async googleProfile(
@@ -181,11 +196,42 @@ export class HttpPlayerOAuthGateway implements PlayerOAuthGateway {
     };
   }
 
+  private async facebookProfile(
+    accessToken: string,
+  ): Promise<PlayerOAuthProfile> {
+    const url = new URL('https://graph.facebook.com/me');
+    url.searchParams.set('fields', 'id,email,first_name,last_name,name');
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = await this.json(response);
+    const id = this.string(body.id);
+    const email = this.string(body.email).toLowerCase();
+    if (!response.ok || !id || !email) {
+      throw new Error('A verified provider email is required');
+    }
+    return {
+      provider: PlayerAuthProvider.FACEBOOK,
+      providerUserId: id,
+      email,
+      emailVerified: true,
+      username: `facebook_${id}`,
+      firstName: this.string(body.first_name),
+      lastName: this.string(body.last_name),
+    };
+  }
+
   private credentials(provider: PlayerAuthProvider): {
     clientId: string;
     clientSecret: string;
   } {
-    const prefix = provider === PlayerAuthProvider.GOOGLE ? 'google' : 'github';
+    const prefix =
+      provider === PlayerAuthProvider.GOOGLE
+        ? 'google'
+        : provider === PlayerAuthProvider.FACEBOOK
+          ? 'facebook'
+          : 'github';
     const clientId = this.config.get<string>(`playerAuth.${prefix}ClientId`);
     const clientSecret = this.config.get<string>(
       `playerAuth.${prefix}ClientSecret`,

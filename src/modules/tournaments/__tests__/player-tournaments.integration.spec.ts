@@ -172,6 +172,15 @@ describe('Player tournaments API (integration)', () => {
         prizeWon: new Prisma.Decimal('75.00'),
       },
     });
+    const publicScheduled = await seedPublic({
+      name: 'Public Scheduled Cup',
+      status: TournamentStatus.SCHEDULED,
+    });
+    const publicPast = await seedPublic({
+      name: 'Public Past Cup',
+      status: TournamentStatus.COMPLETED,
+      startsAt: new Date('2026-01-02T12:00:00.000Z'),
+    });
     const mine = await testPrisma.tournament.create({
       data: {
         name: 'My Private Cup',
@@ -209,7 +218,11 @@ describe('Player tournaments API (integration)', () => {
       name: 'Authoritative Featured Cup',
     });
     expect(dashboard.scheduled.map((item) => item.id)).toContain(mine.id);
+    expect(dashboard.scheduled.map((item) => item.id)).toContain(
+      publicScheduled.id,
+    );
     expect(dashboard.past.map((item) => item.id)).toContain(past.id);
+    expect(dashboard.past.map((item) => item.id)).toContain(publicPast.id);
     expect(JSON.stringify(dashboard)).not.toContain(secret.id);
     expect(dashboard.stats).toMatchObject({
       tournamentsPlayed: 1,

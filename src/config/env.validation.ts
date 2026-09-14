@@ -61,6 +61,8 @@ export const envValidationSchema = Joi.object({
   GOOGLE_CLIENT_SECRET: Joi.string().allow(''),
   GITHUB_CLIENT_ID: Joi.string().allow(''),
   GITHUB_CLIENT_SECRET: Joi.string().allow(''),
+  FACEBOOK_CLIENT_ID: Joi.string().allow(''),
+  FACEBOOK_CLIENT_SECRET: Joi.string().allow(''),
 
   WEBHOOK_SECRET: Joi.string().min(16).required(),
 

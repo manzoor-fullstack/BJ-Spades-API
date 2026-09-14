@@ -55,8 +55,8 @@ export class PlayerAuthController {
   @Post('register')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Register or claim a player account' })
-  register(@Body() dto: PlayerSignupDto) {
-    return this.service.register(dto);
+  register(@Body() dto: PlayerSignupDto, @Req() request: Request) {
+    return this.service.register(dto, extractRequestContext(request));
   }
 
   @Public()
@@ -204,6 +204,7 @@ export class PlayerAuthController {
   private provider(value: string): PlayerAuthProvider {
     if (value.toLowerCase() === 'google') return PlayerAuthProvider.GOOGLE;
     if (value.toLowerCase() === 'github') return PlayerAuthProvider.GITHUB;
+    if (value.toLowerCase() === 'facebook') return PlayerAuthProvider.FACEBOOK;
     throw new NotFoundException('OAuth provider not found.');
   }
 }

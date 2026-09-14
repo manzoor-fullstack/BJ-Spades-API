@@ -17,6 +17,8 @@ describe('HttpPlayerOAuthGateway', () => {
       googleClientSecret: 'google-secret',
       githubClientId: 'github-id',
       githubClientSecret: 'github-secret',
+      facebookClientId: 'facebook-id',
+      facebookClientSecret: 'facebook-secret',
     },
   });
   const gateway = new HttpPlayerOAuthGateway(config);
@@ -112,6 +114,66 @@ describe('HttpPlayerOAuthGateway', () => {
       emailVerified: true,
       username: 'card_shark',
     });
+  });
+
+  it('builds and exchanges a Facebook login request for an email profile', async () => {
+    const authorization = new URL(
+      gateway.authorizationUrl({
+        provider: PlayerAuthProvider.FACEBOOK,
+        state: 'facebook-state',
+        codeChallenge: 'unused-by-facebook',
+        callbackUrl: 'https://api.example.com/facebook/callback',
+      }),
+    );
+    expect(authorization.origin + authorization.pathname).toBe(
+      'https://www.facebook.com/dialog/oauth',
+    );
+    expect(Object.fromEntries(authorization.searchParams)).toMatchObject({
+      client_id: 'facebook-id',
+      redirect_uri: 'https://api.example.com/facebook/callback',
+      response_type: 'code',
+      state: 'facebook-state',
+      scope: 'email public_profile',
+    });
+    expect(authorization.searchParams.has('code_challenge')).toBe(false);
+
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'facebook-token' }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'facebook-42',
+          email: 'Player@Example.com',
+          first_name: 'Face',
+          last_name: 'Book',
+        }),
+      );
+
+    await expect(
+      gateway.exchange({
+        provider: PlayerAuthProvider.FACEBOOK,
+        code: 'authorization-code',
+        codeVerifier: 'unused-by-facebook',
+        callbackUrl: 'https://api.example.com/facebook/callback',
+      }),
+    ).resolves.toEqual({
+      provider: PlayerAuthProvider.FACEBOOK,
+      providerUserId: 'facebook-42',
+      email: 'player@example.com',
+      emailVerified: true,
+      username: 'facebook_facebook-42',
+      firstName: 'Face',
+      lastName: 'Book',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://graph.facebook.com/oauth/access_token',
+    );
+    const profileUrl = fetchMock.mock.calls[1]?.[0];
+    expect(profileUrl).toBeInstanceOf(URL);
+    expect((profileUrl as URL).searchParams.get('fields')).toBe(
+      'id,email,first_name,last_name,name',
+    );
   });
 
   it('rejects GitHub identities without a primary verified email', async () => {
