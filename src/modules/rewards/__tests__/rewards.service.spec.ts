@@ -12,6 +12,7 @@ import type { MediaService } from '../../storage/media.service';
 import { CreateRewardDto } from '../dto/create-reward.dto';
 import { QueryRewardsDto } from '../dto/query-rewards.dto';
 import type {
+  CreateRewardData,
   RewardsRepository,
   RewardWithRelations,
 } from '../repositories/rewards.repository';
@@ -120,6 +121,9 @@ describe('RewardsService', () => {
           category: RewardCategory.FOOD,
           status: ItemStatus.COMING_SOON,
           stock: 12,
+          denomination: '10.00',
+          tokenCost: '8.50',
+          bonusPercent: 15,
         }),
         undefined,
         ADMIN,
@@ -134,9 +138,30 @@ describe('RewardsService', () => {
           category: RewardCategory.FOOD,
           status: ItemStatus.COMING_SOON,
           stock: 12,
+          bonusPercent: 15,
           createdByAdminId: ADMIN.id,
         }),
       );
+
+      const saved = (repository.create.mock.calls[0] as [CreateRewardData])[0];
+      expect(saved.denomination?.toFixed(2)).toBe('10.00');
+      expect(saved.tokenCost?.toFixed(2)).toBe('8.50');
+    });
+
+    it('requires complete, positive player catalogue pricing', async () => {
+      await expect(
+        service.create(createDto({ denomination: '10.00' }), undefined, ADMIN),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+      await expect(
+        service.create(
+          createDto({ denomination: '0', tokenCost: '10.00' }),
+          undefined,
+          ADMIN,
+        ),
+      ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
     it('defaults an omitted stock to null, meaning unlimited', async () => {
