@@ -1,6 +1,7 @@
 import type { ItemStatus, RewardCategory } from '@prisma/client';
 
 import { isLowStock } from '../../../common/constants/stock';
+import { formatMoney } from '../../../common/money/money.util';
 import type { RewardWithRelations } from '../repositories/rewards.repository';
 
 export interface RewardImage {
@@ -24,6 +25,9 @@ export interface RewardListItem {
   company: string;
   category: RewardCategory;
   value: string;
+  denomination: string | null;
+  tokenCost: string | null;
+  bonusPercent: number;
   description: string | null;
   terms: string | null;
   image: RewardImage | null;
@@ -50,6 +54,9 @@ export function toRewardListItem(reward: RewardWithRelations): RewardListItem {
     company: reward.company,
     category: reward.category,
     value: reward.value,
+    denomination: reward.denomination ? formatMoney(reward.denomination) : null,
+    tokenCost: reward.tokenCost ? formatMoney(reward.tokenCost) : null,
+    bonusPercent: reward.bonusPercent,
     description: reward.description,
     terms: reward.terms,
     image: reward.image

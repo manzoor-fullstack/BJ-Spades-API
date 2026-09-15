@@ -7,11 +7,13 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Max,
   MaxLength,
   Min,
 } from 'class-validator';
 
+import { MONEY_PATTERN } from '../../../common/money/money.util';
 import {
   emptyStringToUndefined,
   toEnumToken,
@@ -60,6 +62,43 @@ export class CreateRewardDto {
   @IsString()
   @Length(1, 60)
   value: string;
+
+  @ApiPropertyOptional({
+    example: '10.00',
+    description:
+      'Face value shown in the player gift-card catalogue. When omitted the reward remains admin-only.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(MONEY_PATTERN, {
+    message: 'denomination must be a positive amount with up to 2 decimals',
+  })
+  denomination?: string;
+
+  @ApiPropertyOptional({
+    example: '10.00',
+    description:
+      'Tokens charged to the player. Required with denomination for a player-visible gift card.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(MONEY_PATTERN, {
+    message: 'tokenCost must be a positive amount with up to 2 decimals',
+  })
+  tokenCost?: string;
+
+  @ApiPropertyOptional({
+    example: 8,
+    minimum: 0,
+    maximum: 100,
+    default: 0,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  bonusPercent?: number;
 
   @ApiPropertyOptional({ maxLength: 2000 })
   @IsOptional()
