@@ -11,6 +11,7 @@ import {
   SortOrder,
 } from '../../common/dto/pagination.dto';
 import type { Paginated } from '../../common/interceptors/transform.interceptor';
+import { toMoney } from '../../common/money/money.util';
 import type { AuthenticatedAdmin } from '../auth/interfaces/authenticated-admin.interface';
 import type { ValidatableUpload } from '../storage/image-validation';
 import { MediaService } from '../storage/media.service';
@@ -61,6 +62,26 @@ function emptyToNull(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function assertPlayerPricing(
+  denomination: string | undefined,
+  tokenCost: string | undefined,
+): void {
+  if ((denomination === undefined) !== (tokenCost === undefined)) {
+    throw new UnprocessableEntityException(
+      'denomination and tokenCost must be provided together.',
+    );
+  }
+
+  if (
+    denomination !== undefined &&
+    (toMoney(denomination).lte(0) || toMoney(tokenCost!).lte(0))
+  ) {
+    throw new UnprocessableEntityException(
+      'denomination and tokenCost must be greater than zero.',
+    );
+  }
+}
+
 @Injectable()
 export class RewardsService {
   constructor(
@@ -95,6 +116,7 @@ export class RewardsService {
     // protects the method. A service that is only correct when called through a
     // controller is a service with a hole in it.
     assertStock(dto.stock);
+    assertPlayerPricing(dto.denomination, dto.tokenCost);
 
     const asset = image
       ? await this.media.uploadImage(image, REWARD_IMAGE_FOLDER, admin.id)
@@ -105,6 +127,9 @@ export class RewardsService {
       company: dto.company.trim(),
       category: dto.category ?? RewardCategory.GENERAL,
       value: dto.value.trim(),
+      denomination: dto.denomination ? toMoney(dto.denomination) : null,
+      tokenCost: dto.tokenCost ? toMoney(dto.tokenCost) : null,
+      bonusPercent: dto.bonusPercent ?? 0,
       description: emptyToNull(dto.description),
       terms: emptyToNull(dto.termsConditions),
       imageId: asset?.id ?? null,
@@ -134,6 +159,7 @@ export class RewardsService {
     const existing = await this.getOrThrow(id);
 
     assertStock(dto.stock);
+    assertPlayerPricing(dto.denomination, dto.tokenCost);
 
     const data: UpdateRewardData = {};
 
@@ -151,6 +177,15 @@ export class RewardsService {
 
     if (dto.value !== undefined) {
       data.value = dto.value.trim();
+    }
+
+    if (dto.denomination !== undefined && dto.tokenCost !== undefined) {
+      data.denomination = toMoney(dto.denomination);
+      data.tokenCost = toMoney(dto.tokenCost);
+    }
+
+    if (dto.bonusPercent !== undefined) {
+      data.bonusPercent = dto.bonusPercent;
     }
 
     if (dto.description !== undefined) {

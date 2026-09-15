@@ -35,6 +35,9 @@ export interface CreateRewardData {
   company: string;
   category: RewardCategory;
   value: string;
+  denomination: Prisma.Decimal | null;
+  tokenCost: Prisma.Decimal | null;
+  bonusPercent: number;
   description: string | null;
   terms: string | null;
   imageId: string | null;
@@ -48,6 +51,9 @@ export interface UpdateRewardData {
   company?: string;
   category?: RewardCategory;
   value?: string;
+  denomination?: Prisma.Decimal | null;
+  tokenCost?: Prisma.Decimal | null;
+  bonusPercent?: number;
   description?: string | null;
   terms?: string | null;
   imageId?: string | null;
